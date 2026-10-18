@@ -1,0 +1,27 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'fr.palmero.interventions'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'fr.palmero.interventions'
+        minSdk 26
+        targetSdk 34
+        versionCode 111
+        versionName '1.0 (page v111)'
+    }
+    signingConfigs {
+        release {
+            storeFile file('interventions.jks')
+            storePassword 'interventions-palmero'
+            keyAlias 'interventions'
+            keyPassword 'interventions-palmero'
+        }
+    }
+    buildTypes {
+        release { minifyEnabled false; signingConfig signingConfigs.release }
+        debug { signingConfig signingConfigs.release }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    lint { abortOnError false; checkReleaseBuilds false }
+}
+dependencies { implementation 'androidx.core:core:1.13.1' }

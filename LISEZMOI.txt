@@ -1,0 +1,21 @@
+Interventions - application Android (APK)
+
+Compilation gratuite avec GitHub (rien a installer sur ton ordinateur) :
+ 1. Cree un compte sur github.com, puis un depot PRIVE (bouton "New", coche "Private").
+ 2. Dans le depot : "Add file" > "Upload files", glisse TOUT le contenu decompresse de ce zip
+    (y compris le dossier .github), puis "Commit changes".
+ 3. Onglet "Actions" : la compilation "Build APK" demarre seule (3 a 6 min).
+ 4. Quand elle est verte, ouvre-la et telecharge "Interventions-apk" (un zip qui contient Interventions.apk).
+ 5. Sur le telephone : ouvre Interventions.apk et accepte "Installer des applications inconnues" pour ton gestionnaire de fichiers.
+
+Au premier lancement :
+ - autorise "Gestion de tous les fichiers" (enregistrement direct dans Documents/Gestion interventions),
+ - autorise appareil photo, position et micro.
+
+Ouvrir un OI : dans Gmail, appui sur la piece jointe PDF > Ouvrir avec / Partager > Interventions.
+Les OI telecharges dans Download s'affichent aussi en liste dans l'appli (un appui pour les ouvrir).
+
+Mettre a jour la page sans recompiler : copie le nouveau interventions.html dans
+Documents/Gestion interventions/appli/interventions.html (l'appli le prend en priorite).
+Pour une nouvelle version de l'appli : remplace les fichiers du depot et laisse GitHub recompiler ;
+la cle de signature (app/interventions.jks) est la meme, la mise a jour s'installe par-dessus.
