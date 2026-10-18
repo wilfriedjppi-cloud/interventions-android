@@ -1962,7 +1962,23 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
     return logoC.v;
   }
   function lsGet(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
-  function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { if (v != null && typeof memAlert === 'function') memAlert('« ' + k + ' » non enregistré dans la mémoire de Chrome (' + ((e && e.name) || e) + ')'); } if (k === 'bi.prefs' || k === 'bi.frais' || k === 'bi.journal') { try { localStorage.setItem('bi.mt', String(Date.now())); } catch (e) { } } if ((k === 'bi.prefs' || k === 'bi.frais') && typeof userDirty === 'function') userDirty(); }
+  var LS_MIRROR = ['bi.dossiers', 'bi.prefs', 'bi.journal', 'bi.frais', 'bi.agenda', 'bi.projets', 'bi.draft'];
+  function lsMirror(k, v) {                       // copie immédiate dans IndexedDB : survit à une fermeture brutale de l'appli
+    if (LS_MIRROR.indexOf(k) < 0) return;
+    var t = Date.now(); try { var T = JSON.parse(localStorage.getItem('bi.lsT') || '{}') || {}; T[k] = t; localStorage.setItem('bi.lsT', JSON.stringify(T)); } catch (e) { }
+    try { idbSet('ls:' + k, { v: v, t: t }).catch(function () { }); } catch (e) { }
+  }
+  (async function lsRestore() {                   // au démarrage : reprend la copie IndexedDB si elle est plus récente
+    try {
+      var T = JSON.parse(localStorage.getItem('bi.lsT') || '{}') || {}, ch = 0;
+      for (var i = 0; i < LS_MIRROR.length; i++) {
+        var k = LS_MIRROR[i], m = await idbGet('ls:' + k);
+        if (m && m.t && (!T[k] || m.t > T[k] + 5) && m.v != null) { localStorage.setItem(k, JSON.stringify(m.v)); T[k] = m.t; ch++; }
+      }
+      if (ch) { localStorage.setItem('bi.lsT', JSON.stringify(T)); if (!sessionStorage.getItem('bi.lsRestored')) { sessionStorage.setItem('bi.lsRestored', '1'); location.reload(); } }
+    } catch (e) { }
+  })();
+  function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); lsMirror(k, v); } catch (e) { if (v != null && typeof memAlert === 'function') memAlert('« ' + k + ' » non enregistré dans la mémoire de Chrome (' + ((e && e.name) || e) + ')'); } if (k === 'bi.prefs' || k === 'bi.frais' || k === 'bi.journal') { try { localStorage.setItem('bi.mt', String(Date.now())); } catch (e) { } } if ((k === 'bi.prefs' || k === 'bi.frais') && typeof userDirty === 'function') userDirty(); }
   function pad2(n) { return (n < 10 ? '0' : '') + n; }
   function today() { var d = new Date(); return pad2(d.getDate()) + '/' + pad2(d.getMonth() + 1) + '/' + d.getFullYear(); }
   function isoToFr(s) { var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || ''); return m ? m[3] + '/' + m[2] + '/' + m[1] : (s || ''); }
@@ -2047,12 +2063,15 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
   function dosUpsert(dos, ind, info) {             // crée ou complète un dossier et son indice (sans écraser un statut existant)
     dos = clean(dos); ind = clean(ind); info = info || {}; if (!dos) return null;
     var d = DOS(), x = d[dos], ch = false;
-    if (!x) { x = d[dos] = { st: stPick(dosStL, info.dst || 'En cours'), client: '', objet: '', maj: isoNow(), ind: {} }; ch = true; }
+    if (!x) { x = d[dos] = { st: stPick(dosStL, info.dst || 'En cours'), client: '', objet: '', maj: isoNow(), t: Date.now(), ind: {} }; ch = true; }
     if (info.client && !x.client) { x.client = info.client; ch = true; }
     if (info.objet && !x.objet) { x.objet = info.objet; ch = true; }
     if (ind) {
       var y = x.ind[ind];
-      if (!y) { y = x.ind[ind] = { st: stPick(indStL, info.ist || 'Intervention à programmer'), objet: '', date: '', maj: isoNow() }; ch = true; }
+      if (!y) {
+        y = x.ind[ind] = { st: stPick(indStL, info.ist || 'Intervention à programmer'), objet: '', date: '', maj: isoNow(), t: Date.now() }; ch = true;
+        if (info.oi && /termin/i.test(x.st)) { x.st = stPick(dosStL, 'En cours'); x.t = Date.now(); }      // nouvel OI sur un dossier terminé : il repart en cours
+      }
       if (info.objet && !y.objet) { y.objet = info.objet; ch = true; }
       if (info.date && !y.date) { y.date = info.date; ch = true; }
     }
@@ -2061,7 +2080,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
   }
   function dosSet(dos, ind, dst, ist) {
     var d = DOS(), x = d[clean(dos)]; if (!x) return;
-    if (dst) x.st = dst; if (ind && ist && x.ind[clean(ind)]) { x.ind[clean(ind)].st = ist; x.ind[clean(ind)].maj = isoNow(); }
+    if (dst) { x.st = dst; x.t = Date.now(); } if (ind && ist && x.ind[clean(ind)]) { x.ind[clean(ind)].st = ist; x.ind[clean(ind)].maj = isoNow(); x.ind[clean(ind)].t = Date.now(); }
     x.maj = isoNow(); dosSave(d);
   }
   (function dosSeed() {                            // première fois : dossiers déjà connus (journal, agenda)
@@ -2073,7 +2092,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
     prefs.dosSeeded = 1; savePrefs();
   })();
   function stOpts(l, cur) { var a = l.slice(); if (cur && a.indexOf(cur) < 0) a.push(cur); return a.map(function (x) { return '<option' + (x === cur ? ' selected' : '') + '>' + esc(x) + '</option>'; }).join(''); }
-  function stColor(t) { return /termin/i.test(t) ? 'var(--ok)' : /commande|attente|devis/i.test(t) ? 'var(--warn)' : /programmer/i.test(t) ? 'var(--link)' : 'var(--fg)'; }
+  function stColor(t) { return /termin/i.test(t) ? 'var(--ok)' : /commande|attente|devis/i.test(t) ? 'var(--warn)' : /programmer/i.test(t) ? 'var(--tel)' : 'var(--fg)'; }
   function dstUi() {                               // section 2 : statuts du dossier ouvert
     var row = $('dst-row'); if (!row) return; var dos = clean(S.dossier), ind = clean(S.indice), x = dos ? DOS()[dos] : null;
     row.hidden = !dos || !!S.travail;
@@ -2822,7 +2841,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
     var first = S.days[0];
     var iso = oi.dateInter || '';
     if (!demo && first && !first.a1 && !first.a2 && !first.p1 && !first.p2 && iso) first.date = iso;
-  if (!demo) try { dosUpsert(S.dossier, S.indice, { client: S.entreprise, objet: [oi.objet, oi.type].filter(Boolean).join(' · ').slice(0, 120), date: frToIso(oi.dateInter || '') || '' }); } catch (e) { }
+  if (!demo) try { dosUpsert(S.dossier, S.indice, { oi: true, client: S.entreprise, objet: [oi.objet, oi.type].filter(Boolean).join(' · ').slice(0, 120), date: frToIso(oi.dateInter || '') || '' }); } catch (e) { }
   syncFields(); renderDays(); renderOI(demo); onChange(); afterClient();
     setTimeout(function () { kmCalc(false); }, 50);
     if (!demo) setTimeout(function () { if (typeof agSync === 'function') agSync(false); if (typeof agPrevSt === 'function') agPrevSt(); }, 400);   // OI chargé -> programmé ou liste flottante
@@ -3895,11 +3914,10 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
   /* ---------- QPython : OI téléchargés et dossier des OI ---------- */
   async function qpyOiList() {
     if (!QPY) return;
-    var box = $('qpy-oi-l'); $('qpy-oi').hidden = false;
+    var box = $('qpy-oi-l'); $('qpy-oi').hidden = true; if (!prefs.oiListShow) return;      // liste des OI téléchargés masquée
     try {
       var j = await (await fetch('/api/pdfs?n=6', { cache: 'no-store' })).json();
       if (j.error) { box.innerHTML = '<div class="status err">' + esc(j.error) + '</div>'; return; }
-      try { (j.files || []).forEach(function (f) { var m = /(?:^|\D)(\d{4,6})\s*-\s*(\d{1,3})(?:\D|$)/.exec(f.name); if (m) dosUpsert(m[1], m[2], {}); }); } catch (e) { }
       box.innerHTML = j.files && j.files.length ? j.files.map(function (f) {
         var d = new Date(f.mtime);
         return '<button class="btn small" type="button" style="justify-content:space-between;text-align:left" data-pdf="' + esc(f.name) + '"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis">' + esc(f.name) + '</span><span class="status" style="white-space:nowrap">' + pad2(d.getDate()) + '/' + pad2(d.getMonth() + 1) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + '</span></button>';
@@ -4694,7 +4712,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
   var ALLDIRS = [P_CG, P_CU, P_OI, P_RAP, P_BCK, P_GES], GLOB = 'Configuration globale.xls', AGF = 'Agenda.xls', NDFBCK = 'Note de frais en cours.ndf';
   var OLD_WK = 'gestion intervention', OLD_PHO = 'photos notes de frais', OLD_RAP = "rapports d'interventions";
   var WKDIR = P_GES, D_PHO = P_RAP, D_RAP = P_RAP, SYN = 'Synthèse interventions.xls', XLSMIME = 'application/vnd.ms-excel';
-  var APPVER = {"v": "112", "d": "18/10/2026 23:55", "h": "578843e"};
+  var APPVER = {"v": "113", "d": "19/10/2026 00:42", "h": "6b94ce9"};
   try { $('ver-wm').textContent = 'v' + APPVER.v + ' · ' + APPVER.d; } catch (e) { }
   function wmPlace() {                           // en haut de page, sous le menu, et défile avec la page
     try { var n = document.querySelector('nav.tabs'), sp = document.querySelector('.tabs-sp'), w = document.querySelector('.ver-wm'); if (!n || !w || window.scrollY > 5) return; w.style.marginTop = '0px'; var d = Math.round(n.getBoundingClientRect().bottom + 4 - w.getBoundingClientRect().top); w.style.marginTop = d + 'px'; } catch (e) { }
@@ -6137,12 +6155,22 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
     { id: 'Agenda', exp: function () { return [['Date', 'Début', 'Fin', 'Client', 'Adresse', 'N° dossier', 'Indice', 'Note', 'Id', 'Intervention liée', 'Projet', 'Glissante', 'Prévue le', 'Nature', 'Flottante']].concat(ag().map(function (e) { return [frDisp(e.date), e.h1 || '', e.h2 || '', e.client || '', e.adr || '', e.dos || '', e.ind || '', e.note || '', e.id, e.cid || '', e.pj || '', e.gl ? 'Oui' : '', e.orig ? frDisp(e.orig) : '', e.nat || '', !e.date && !e.done ? 'Oui' : '']; })); },
       imp: function (rows) { var l = rows.slice(1).filter(function (r) { return r[0] || r[14] === 'Oui'; }).map(function (r) { return { nat: r[13] || '', flot: r[14] === 'Oui', date: r[14] === 'Oui' ? '' : isoOf(r[0]), h1: r[1] || '', h2: r[2] || '', client: r[3] || '', adr: r[4] || '', dos: clean(r[5] || ''), ind: clean(r[6] || ''), note: r[7] || '', id: r[8] || (newId() + Math.random().toString(36).slice(2, 5)), cid: r[9] || '', pj: r[10] || '', gl: r[11] === 'Oui', orig: r[12] ? isoOf(r[12]) : '' }; }).filter(function (e) { return e.flot || /^\d{4}-\d{2}-\d{2}$/.test(e.date); }); lsSet(AGK, l); agBadge(); } },
     { id: 'Dossiers', exp: function () {
-        var d = DOS(), rows = [['N° dossier', 'Statut dossier', 'Indice', 'Statut indice', 'Client', 'Objet', 'Date OI', 'Mis à jour']];
+        var d = DOS(), rows = [['N° dossier', 'Statut dossier', 'Indice', 'Statut indice', 'Client', 'Objet', 'Date OI', 'Mis à jour', 'Horodatage dossier', 'Horodatage indice']];
         Object.keys(d).sort().forEach(function (k) { var x = d[k], is = Object.keys(x.ind || {}).sort(function (a, b) { return (+a || 0) - (+b || 0); });
-          if (!is.length) rows.push([k, x.st, '', '', x.client || '', x.objet || '', '', x.maj || '']);
-          is.forEach(function (i) { var y = x.ind[i]; rows.push([k, x.st, i, y.st, x.client || '', y.objet || x.objet || '', y.date || '', y.maj || x.maj || '']); }); });
+          if (!is.length) rows.push([k, x.st, '', '', x.client || '', x.objet || '', '', x.maj || '', x.t || '', '']);
+          is.forEach(function (i) { var y = x.ind[i]; rows.push([k, x.st, i, y.st, x.client || '', y.objet || x.objet || '', y.date || '', y.maj || x.maj || '', x.t || '', y.t || '']); }); });
         return rows; },
-      imp: function (rows) { var d = {}; rows.slice(1).forEach(function (r) { var k = clean(r[0]); if (!k) return; var x = d[k] || (d[k] = { st: r[1] || stPick(dosStL, 'En cours'), client: r[4] || '', objet: '', maj: r[7] || '', ind: {} }); if (r[2]) x.ind[clean(r[2])] = { st: r[3] || stPick(indStL, 'Intervention à programmer'), objet: r[5] || '', date: r[6] || '', maj: r[7] || '' }; else x.objet = r[5] || ''; }); lsSet('bi.dossiers', d); prefs.dosSeeded = 1; savePrefs(); try { dstUi(); } catch (e) { } } },
+      imp: function (rows) {                       // fusion : pour chaque dossier et indice, la version la plus récente gagne
+        var d = DOS();
+        rows.slice(1).forEach(function (r) {
+          var k = clean(r[0]); if (!k) return; var tf = Number(r[8]) || 0, x = d[k];
+          if (!x) x = d[k] = { st: r[1] || stPick(dosStL, 'En cours'), client: r[4] || '', objet: r[2] ? '' : (r[5] || ''), maj: r[7] || '', t: tf, ind: {} };
+          else if (tf > (x.t || 0)) { x.st = r[1] || x.st; x.t = tf; if (r[4]) x.client = r[4]; }
+          if (!r[2]) return; var i = clean(r[2]), ti = Number(r[9]) || 0, y = x.ind[i];
+          if (!y) x.ind[i] = { st: r[3] || stPick(indStL, 'Intervention à programmer'), objet: r[5] || '', date: r[6] || '', maj: r[7] || '', t: ti };
+          else if (ti > (y.t || 0)) { y.st = r[3] || y.st; y.t = ti; y.maj = r[7] || y.maj; }
+        });
+        lsSet('bi.dossiers', d); prefs.dosSeeded = 1; savePrefs(); try { dstUi(); } catch (e) { } } },
     { id: 'Statuts', exp: function () { return [['Type', 'Statut']].concat(dosStL.map(function (x) { return ['Dossier', x]; })).concat(indStL.map(function (x) { return ['Indice', x]; })); },
       imp: function (rows) { var a = rows.slice(1).filter(function (r) { return r[0] === 'Dossier' && r[1]; }).map(function (r) { return r[1]; }), b = rows.slice(1).filter(function (r) { return r[0] === 'Indice' && r[1]; }).map(function (r) { return r[1]; }); if (a.length) { dosStL.length = 0; a.forEach(function (x) { dosStL.push(x); }); } if (b.length) { indStL.length = 0; b.forEach(function (x) { indStL.push(x); }); } prefs.dosSt = dosStL; prefs.indSt = indStL; savePrefs(); try { stListUi(); } catch (e) { } } },
     { id: 'Forfaits', exp: function () { return [['Nom', 'Montant (€)']].concat(forfaits.map(function (x) { return [x.n, Number(x.a) || 0]; })); },
@@ -6311,7 +6339,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
     { t: 'Application Android', go: ['cfg'], k: 'application android apk installer appli gmail ouvrir avec partager oi sauvegarde documents tous les fichiers', p: [
       'L\'application Android contient cette même page, mais enregistre directement dans Documents/Gestion interventions (sans autorisation de dossier à redonner) et ne devient jamais « page inaccessible ».',
       'Au premier lancement : autorise « Gestion de tous les fichiers », puis l\'appareil photo, la position et le micro.',
-      'Ouvrir un OI : dans Gmail, appuie sur la pièce jointe PDF → Ouvrir avec (ou Partager) → Interventions : l\'OI est lu tout de suite. Les PDF téléchargés dans Download apparaissent aussi en liste dans « 1 · Ordre », un appui suffit.',
+      'Ouvrir un OI : dans Gmail, appuie sur la pièce jointe PDF → Ouvrir avec (ou Partager) → Interventions : l\'OI est lu tout de suite et ajouté à la liste des dossiers. Sinon « Choisir l\'OI (PDF) ».',
       'Envoi des bons et notes de frais : le partage Android s\'ouvre avec les PDF joints (Gmail, Outlook…). Les bibliothèques (lecteur PDF, OCR, tableur) sont gardées dans l\'appli après leur premier téléchargement : elles marchent ensuite hors connexion.',
       'Mettre à jour la page sans réinstaller : copie le nouveau interventions.html dans Documents/Gestion interventions/appli/ ; l\'appli le prend en priorité. La dictée vocale du navigateur n\'existe pas dans l\'appli : utilise le micro du clavier Google.'] },
     { t: 'Passer d\'un onglet à l\'autre en balayant', go: ['oi'], k: 'swipe balayer glisser doigt onglet gauche droite navigation geste', p: [
@@ -6411,7 +6439,8 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
     { t: 'Dossiers et indices : statuts', go: ['oi', '2 · Client'], k: 'dossier indice statut devis en cours terminé pièce en commande attente devis règlement programmer liste suivi', p: [
       '🗂 Dossiers (carte de l\'intervention, ou « 🗂 Tous les dossiers » dans « 2 · Client et dossier ») : la liste des n° de dossier et de leurs indices, chacun avec son statut, à changer d\'un appui dans la liste déroulante.',
       'Statut du dossier : Devis, En cours, Terminé. Statut de l\'indice : Pièce en commande, Attente de devis, Attente de règlement, Intervention à programmer, Terminé. Les deux listes se modifient dans Réglages → « Statuts des dossiers et des indices » (↑ monter, ✕ retirer, « Listes par défaut »).',
-      'Chaque OI ouvert ajoute (ou complète) son dossier et son indice : dossier « En cours », indice « Intervention à programmer ». Avec l\'appli Android, les OI téléchargés dont le nom contient 37785-3 sont aussi ajoutés.',
+      'Chaque nouvel OI ouvert s\'ajoute à la liste : son indice avec le statut « Intervention à programmer », son dossier « En cours » (un dossier « Terminé » repasse « En cours » quand un nouvel indice arrive). Un indice déjà connu garde son statut.',
+      'Les statuts sont enregistrés à chaque changement, avec une copie immédiate dans la mémoire de secours de l\'appli : ils ne se perdent plus si l\'appli est fermée juste après. Au rechargement d\'Agenda.xls, c\'est la modification la plus récente qui gagne.',
       'À l\'envoi du rapport, une fenêtre propose la mise à jour des statuts : indice « Terminé » si l\'intervention est terminée, « Pièce en commande » s\'il y a des pièces à commander. « Ne rien changer » laisse tout tel quel.',
       'Recherche (n°, client) et filtre par statut en haut de la liste ; « Ouvrir l\'intervention » rouvre le rapport correspondant ; « + Dossier », « + Indice » et 🗑 (deux appuis) pour gérer la liste à la main. La liste est sauvegardée dans Agenda.xls (onglet Dossiers).'] },
     { t: 'Arborescence des fichiers', go: ['cfg', 'Répertoire'], k: 'arborescence dossiers fichiers répertoire documents gestion interventions config données rapports backup gestion oi xls bck ndf pdf', p: [
