@@ -2,6 +2,8 @@ name: Build APK
 on:
   push:
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -21,3 +23,7 @@ jobs:
         with:
           name: Interventions-apk
           path: Interventions.apk
+      - name: Publication (onglet Releases)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "appli-${{ github.run_number }}" Interventions.apk --repo "${{ github.repository }}" --title "Interventions - appli ${{ github.run_number }}" --notes "APK a installer sur le telephone (ouvrir Interventions.apk)." --latest
