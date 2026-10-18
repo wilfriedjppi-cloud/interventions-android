@@ -209,6 +209,19 @@ mark { background: rgba(242, 127, 12, .4); background: color-mix(in srgb, var(--
 .cmd-h .btn { margin-left: auto; }
 .cmd-h .lensb { margin-left: 0; }
 .cur-it { display: flex; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: var(--field); }
+.dst-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: end; }
+.dst-row .btn { grid-column: 1 / -1; justify-self: start; }
+.dos { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--field); display: grid; gap: 6px; }
+.dos-h { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; align-items: center; }
+.dos-h b { font-size: 15px; font-variant-numeric: tabular-nums; }
+.dos-h small { grid-column: 1 / -1; color: var(--muted); overflow-wrap: anywhere; }
+.dos-i { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; align-items: center; padding: 6px 0 0 10px; border-top: 1px dashed var(--line); }
+.dos-i span { min-width: 0; overflow-wrap: anywhere; font-size: 13.5px; }
+.dos select { max-width: 52vw; font-size: 13px; padding: 4px 6px; }
+.dos .dos-a { display: flex; gap: 6px; flex-wrap: wrap; }
+.dos .dos-a .btn { min-height: 32px; padding: 3px 10px; font-size: 12.5px; }
+.st-tag { font-weight: 700; }
+pre.tree { margin: 6px 0; padding: 8px; background: var(--field); border: 1px solid var(--line); border-radius: 8px; font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace; overflow-x: auto; white-space: pre; }
 .ci { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; align-items: start; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--field); }
 .ci .ci-r { font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; overflow-wrap: normal; word-break: normal; }
 .ci .ci-c { grid-column: 1 / -1; font-weight: 600; overflow-wrap: anywhere; }
@@ -377,7 +390,7 @@ body.rt .no-rt, body.rt #s-oi { display: none !important; }
 </div>
 <div class="cur" id="cur-card">
   <div style="min-width:0;flex:1"><b id="cur-name" style="overflow-wrap:anywhere">Intervention</b><div class="status" id="cur-st"></div><div class="status ok" id="cur-msg" role="status"></div></div>
-  <div class="row"><button class="btn small primary" id="cur-new" type="button">Nouvelle intervention</button><button class="btn small" id="cur-list" type="button">En cours (<span id="cur-n">1</span>)</button><button class="btn small" id="cur-bck" type="button">Sauvegarde .bck</button><button class="btn small" id="cur-rp" type="button">📋 Remplir depuis un rapport</button></div>
+  <div class="row"><button class="btn small primary" id="cur-new" type="button">Nouvelle intervention</button><button class="btn small" id="cur-list" type="button">En cours (<span id="cur-n">1</span>)</button><button class="btn small" id="cur-bck" type="button">Sauvegarde .bck</button><button class="btn small" id="cur-rp" type="button">📋 Remplir depuis un rapport</button><button class="btn small" id="dos-open" type="button">🗂 Dossiers</button></div>
 </div>
   <div class="ag-views rt-type" id="rt-type" role="tablist" aria-label="Type de rapport"><button type="button" data-rt="0" aria-selected="true">📄 Rapport d'intervention (OI)</button><button type="button" data-rt="1" aria-selected="false">📝 Rapport de travail (sans OI)</button></div>
   <section id="s-oi">
@@ -419,6 +432,11 @@ body.rt .no-rt, body.rt #s-oi { display: none !important; }
       <label><span class="no-rt">N° de dossier</span><span class="rt-only">Référence (facultatif)</span><input id="f-dossier" class="num" inputmode="numeric" autocomplete="off" placeholder="ex : 37785"></label>
       <label class="no-rt">Indice d'intervention<input id="f-indice" class="num" inputmode="numeric" autocomplete="off" placeholder="ex : 3 (OI 37785-3)"></label>
       <div class="status no-rt" id="f-ref" style="align-self:end;padding-bottom:12px"></div>
+      <div class="full no-rt dst-row" id="dst-row" hidden>
+        <label>Statut du dossier<select id="f-dst"></select></label>
+        <label>Statut de l'indice<select id="f-ist"></select></label>
+        <button class="btn small" id="dos-open2" type="button">🗂 Tous les dossiers</button>
+      </div>
       <div class="full row" id="bi-row" hidden><span class="status" id="bi-info" style="flex:1"></span><button class="btn small" id="bi-use" type="button">Prendre le suivant</button></div>
       <label class="full">Entreprise<span class="rt-only hint"> (facultatif)</span><input id="f-entreprise" autocomplete="off"></label>
       <label class="full">Adresse d'intervention<input id="f-adresse" autocomplete="off"></label>
@@ -806,6 +824,16 @@ body.rt .no-rt, body.rt #s-oi { display: none !important; }
     <p class="hint">Coche les catégories voulues : l'export n'écrit que celles-là, l'import n'applique que celles-là. La signature n'est pas incluse.</p>
   </section>
   <section>
+    <h2>Statuts des dossiers et des indices <span class="hint">listes de choix</span></h2>
+    <b>Dossier</b>
+    <div class="q" id="c-dsl"></div>
+    <div class="row"><input id="c-dsn" autocomplete="off" placeholder="ex : En attente client" style="flex:1;min-width:0"><button class="btn small primary" id="c-dsadd" type="button">Ajouter</button></div>
+    <b>Indice</b>
+    <div class="q" id="c-isl"></div>
+    <div class="row"><input id="c-isn" autocomplete="off" placeholder="ex : Pièce reçue" style="flex:1;min-width:0"><button class="btn small primary" id="c-isadd" type="button">Ajouter</button></div>
+    <div class="row"><button class="btn link" id="c-stdef" type="button">Listes par défaut</button></div>
+  </section>
+  <section>
     <h2>Objets des rapports de travail <span class="hint">liste de choix du type de travail</span></h2>
     <div class="q" id="c-rtl"></div>
     <div class="row"><input id="c-rtn" autocomplete="off" placeholder="ex : Aide au diagnostic" style="flex:1;min-width:0"><button class="btn small primary" id="c-rtadd" type="button">Ajouter</button></div>
@@ -1073,6 +1101,31 @@ body.rt .no-rt, body.rt #s-oi { display: none !important; }
     <div class="row" style="flex-wrap:nowrap;padding:10px 12px 0"><b style="font-size:var(--ft,18px);flex:1;min-width:0" id="cfgb-t">Réglages</b><button class="btn small" id="cfgb-x" type="button" aria-label="Fermer">✕</button></div>
     <div id="cfgb-host" style="overflow:auto;display:flex;flex-direction:column;gap:12px;padding:0 10px"></div>
     <div class="row obar" style="padding:0 12px 12px"><button class="btn primary" id="cfgb-ok" type="button">Valider</button></div>
+  </div>
+</div>
+<div class="over" id="dos-ov" hidden style="z-index:50;justify-content:center">
+  <div class="box" style="flex:0 1 auto;flex-direction:column;align-items:stretch;gap:10px;max-height:90vh">
+    <b style="font-size:16px">Dossiers et indices</b>
+    <div class="status" id="dos-sum"></div>
+    <div class="row" style="flex-wrap:nowrap"><input id="dos-q" type="search" autocomplete="off" placeholder="ex : 37785, SOCIETE A" style="flex:1;min-width:0" aria-label="Rechercher"><select id="dos-f" aria-label="Filtrer par statut" style="max-width:48%"></select></div>
+    <div id="dos-l" style="display:grid;gap:8px;overflow:auto;min-height:0"></div>
+    <div class="grid" id="dos-new" hidden>
+      <label>N° de dossier<input id="dos-nd" class="num" inputmode="numeric" autocomplete="off" placeholder="ex : 37785"></label>
+      <label>Indice<input id="dos-ni" class="num" inputmode="numeric" autocomplete="off" placeholder="ex : 3"></label>
+      <label class="full">Client<input id="dos-nc" autocomplete="off" placeholder="ex : SOCIETE A"></label>
+      <div class="full row"><button class="btn small primary" id="dos-nok" type="button">Ajouter</button><button class="btn small" id="dos-nx" type="button">Annuler</button></div>
+    </div>
+    <div class="status" id="dos-st" role="status"></div>
+    <div class="row" style="flex-wrap:nowrap"><button class="btn" id="dos-add" type="button">+ Dossier</button><button class="btn primary" id="dos-x" type="button">Fermer</button></div>
+  </div>
+</div>
+<div class="over" id="dosa-ov" hidden style="z-index:55;justify-content:center">
+  <div class="box" style="flex:0 1 auto;flex-direction:column;align-items:stretch;gap:10px">
+    <b style="font-size:16px">Mettre à jour les statuts ?</b>
+    <div class="status" id="dosa-t"></div>
+    <label>Statut du dossier <span id="dosa-d"></span><select id="dosa-ds"></select></label>
+    <label>Statut de l'indice <span id="dosa-i"></span><select id="dosa-is"></select></label>
+    <div class="row" style="flex-wrap:nowrap"><button class="btn" id="dosa-no" type="button">Ne rien changer</button><button class="btn primary" id="dosa-ok" type="button">Mettre à jour</button></div>
   </div>
 </div>
 <div class="over" id="rp-ov" hidden style="z-index:50;justify-content:center">
@@ -1984,6 +2037,140 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
     $('f-fname').value = S.fname;
   }
 
+  /* ---------- dossiers et indices : statuts ---------- */
+  var DOS_DEF = ['Devis', 'En cours', 'Terminé'], IND_DEF = ['Pièce en commande', 'Attente de devis', 'Attente de règlement', 'Intervention à programmer', 'Terminé'];
+  var dosStL = Array.isArray(prefs.dosSt) && prefs.dosSt.length ? prefs.dosSt : DOS_DEF.slice(), indStL = Array.isArray(prefs.indSt) && prefs.indSt.length ? prefs.indSt : IND_DEF.slice();
+  function DOS() { return lsGet('bi.dossiers') || {}; }
+  function dosSave(d) { lsSet('bi.dossiers', d); try { autoSync(); } catch (e) { } }
+  function isoNow() { var d = new Date(); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+  function stPick(l, want) { return l.indexOf(want) >= 0 ? want : l[0] || ''; }
+  function dosUpsert(dos, ind, info) {             // crée ou complète un dossier et son indice (sans écraser un statut existant)
+    dos = clean(dos); ind = clean(ind); info = info || {}; if (!dos) return null;
+    var d = DOS(), x = d[dos], ch = false;
+    if (!x) { x = d[dos] = { st: stPick(dosStL, info.dst || 'En cours'), client: '', objet: '', maj: isoNow(), ind: {} }; ch = true; }
+    if (info.client && !x.client) { x.client = info.client; ch = true; }
+    if (info.objet && !x.objet) { x.objet = info.objet; ch = true; }
+    if (ind) {
+      var y = x.ind[ind];
+      if (!y) { y = x.ind[ind] = { st: stPick(indStL, info.ist || 'Intervention à programmer'), objet: '', date: '', maj: isoNow() }; ch = true; }
+      if (info.objet && !y.objet) { y.objet = info.objet; ch = true; }
+      if (info.date && !y.date) { y.date = info.date; ch = true; }
+    }
+    if (ch) { x.maj = isoNow(); dosSave(d); }
+    return x;
+  }
+  function dosSet(dos, ind, dst, ist) {
+    var d = DOS(), x = d[clean(dos)]; if (!x) return;
+    if (dst) x.st = dst; if (ind && ist && x.ind[clean(ind)]) { x.ind[clean(ind)].st = ist; x.ind[clean(ind)].maj = isoNow(); }
+    x.maj = isoNow(); dosSave(d);
+  }
+  (function dosSeed() {                            // première fois : dossiers déjà connus (journal, agenda)
+    if (prefs.dosSeeded) return;
+    try {
+      jr().forEach(function (r) { if (r.dossier && !r.travail) dosUpsert(r.dossier, r.indice || (r.oi && String(r.oi).indexOf('-') > 0 ? String(r.oi).split('-')[1] : ''), { client: r.client, ist: r.statut === 'Terminée' && r.envoye ? 'Terminé' : r.statut === 'Pièces à commander' ? 'Pièce en commande' : 'Intervention à programmer' }); });
+      (lsGet('bi.agenda') || []).forEach(function (e) { if (e.dos) dosUpsert(e.dos, e.ind, { client: e.client }); });
+    } catch (e) { }
+    prefs.dosSeeded = 1; savePrefs();
+  })();
+  function stOpts(l, cur) { var a = l.slice(); if (cur && a.indexOf(cur) < 0) a.push(cur); return a.map(function (x) { return '<option' + (x === cur ? ' selected' : '') + '>' + esc(x) + '</option>'; }).join(''); }
+  function stColor(t) { return /termin/i.test(t) ? 'var(--ok)' : /commande|attente|devis/i.test(t) ? 'var(--warn)' : /programmer/i.test(t) ? 'var(--link)' : 'var(--fg)'; }
+  function dstUi() {                               // section 2 : statuts du dossier ouvert
+    var row = $('dst-row'); if (!row) return; var dos = clean(S.dossier), ind = clean(S.indice), x = dos ? DOS()[dos] : null;
+    row.hidden = !dos || !!S.travail;
+    if (!dos) return;
+    $('f-dst').innerHTML = stOpts(dosStL, x ? x.st : stPick(dosStL, 'En cours'));
+    $('f-ist').innerHTML = stOpts(indStL, x && ind && x.ind[ind] ? x.ind[ind].st : stPick(indStL, 'Intervention à programmer'));
+    $('f-ist').disabled = !ind; $('f-ist').parentNode.style.opacity = ind ? '' : '.5';
+  }
+  $('f-dst').addEventListener('change', function () { dosUpsert(S.dossier, S.indice, { client: S.entreprise }); dosSet(S.dossier, null, this.value); });
+  $('f-ist').addEventListener('change', function () { dosUpsert(S.dossier, S.indice, { client: S.entreprise }); dosSet(S.dossier, S.indice, null, this.value); });
+  function dosFltOpts() {
+    $('dos-f').innerHTML = '<option value="">Tous les statuts</option><optgroup label="Dossier">' + dosStL.map(function (x) { return '<option value="d:' + esc(x) + '">' + esc(x) + '</option>'; }).join('') + '</optgroup><optgroup label="Indice">' + indStL.map(function (x) { return '<option value="i:' + esc(x) + '">' + esc(x) + '</option>'; }).join('') + '</optgroup>';
+  }
+  var dosArm = '';
+  async function dosRender() {
+    var d = DOS(), q = norm($('dos-q').value || ''), f = $('dos-f').value, keys = Object.keys(d), idx = [];
+    try { idx = await curIdx(); } catch (e) { }
+    var nInd = 0, cnt = {}; keys.forEach(function (k) { cnt['d:' + d[k].st] = (cnt['d:' + d[k].st] || 0) + 1; Object.keys(d[k].ind || {}).forEach(function (i) { nInd++; var t = 'i:' + d[k].ind[i].st; cnt[t] = (cnt[t] || 0) + 1; }); });
+    $('dos-sum').textContent = keys.length + ' dossier(s), ' + nInd + ' indice(s)' + (keys.length ? ' · ' + dosStL.map(function (x) { return (cnt['d:' + x] || 0) + ' ' + x.toLowerCase(); }).join(', ') + ' · ' + (cnt['i:' + stPick(indStL, 'Intervention à programmer')] || 0) + ' indice(s) à programmer' : '');
+    var l = keys.filter(function (k) {
+      var x = d[k];
+      if (q && norm([k, x.client, x.objet].concat(Object.keys(x.ind || {}).map(function (i) { return k + '-' + i + ' ' + (x.ind[i].objet || ''); })).join(' ')).indexOf(q) < 0) return false;
+      if (!f) return true; if (f.indexOf('d:') === 0) return x.st === f.slice(2);
+      return Object.keys(x.ind || {}).some(function (i) { return x.ind[i].st === f.slice(2); });
+    }).sort(function (a, b) { return String(d[b].maj).localeCompare(String(d[a].maj)) || b.localeCompare(a); });
+    $('dos-l').innerHTML = l.length ? l.map(function (k) {
+      var x = d[k], inds = Object.keys(x.ind || {}).sort(function (a, b) { return (+a || 0) - (+b || 0); });
+      if (f && f.indexOf('i:') === 0) inds = inds.filter(function (i) { return x.ind[i].st === f.slice(2); });
+      return '<div class="dos" data-dk="' + esc(k) + '"><div class="dos-h"><b>' + esc(k) + '</b><select data-dst="1" aria-label="Statut du dossier ' + esc(k) + '" style="color:' + stColor(x.st) + '">' + stOpts(dosStL, x.st) + '</select>' +
+        '<small>' + esc([x.client || '(client non renseigné)', x.objet].filter(Boolean).join(' · ')) + '</small></div>' +
+        inds.map(function (i) {
+          var y = x.ind[i], it = idx.filter(function (c) { return clean(c.dossier) === k && clean(c.indice) === i; })[0];
+          return '<div class="dos-i" data-di="' + esc(i) + '"><span><b>' + esc(k + '-' + i) + '</b>' + (y.objet ? ' · ' + esc(y.objet) : '') + (y.date ? ' · ' + esc(frDisp ? frDisp(y.date) : y.date) : '') + '</span>' +
+            '<select data-ist="1" aria-label="Statut de l\'indice ' + esc(k + '-' + i) + '" style="color:' + stColor(y.st) + '">' + stOpts(indStL, y.st) + '</select>' +
+            (it ? '<span style="grid-column:1/-1"><button class="btn small" type="button" data-dopen="' + esc(it.id) + '">Ouvrir l\'intervention</button></span>' : '') + '</div>';
+        }).join('') +
+        '<div class="dos-a"><button class="btn small" type="button" data-dind="1">+ Indice</button><button class="btn small" type="button" data-ddel="1">' + (dosArm === k ? 'Confirmer la suppression' : '🗑') + '</button></div></div>';
+    }).join('') : '<div class="status">' + (keys.length ? 'Aucun dossier ne correspond.' : 'Aucun dossier : ils s\'ajoutent à chaque OI ouvert, ou avec « + Dossier ».') + '</div>';
+  }
+  function dosOpen() { dosFltOpts(); $('dos-st').textContent = ''; $('dos-new').hidden = true; dosRender(); $('dos-ov').hidden = false; }
+  $('dos-open').addEventListener('click', dosOpen); $('dos-open2').addEventListener('click', dosOpen);
+  $('dos-x').addEventListener('click', function () { $('dos-ov').hidden = true; dstUi(); });
+  $('dos-q').addEventListener('input', dosRender); $('dos-f').addEventListener('change', dosRender);
+  $('dos-add').addEventListener('click', function () { $('dos-new').hidden = false; $('dos-nd').value = ''; $('dos-ni').value = ''; $('dos-nc').value = ''; $('dos-nd').focus(); });
+  $('dos-nx').addEventListener('click', function () { $('dos-new').hidden = true; });
+  $('dos-nok').addEventListener('click', function () {
+    var dn = clean($('dos-nd').value), m = /^(\d+)\s*-\s*(\d+)$/.exec(dn), ind = clean($('dos-ni').value); if (m) { dn = m[1]; ind = ind || m[2]; }
+    if (!dn) { $('dos-st').textContent = 'Saisis le n° de dossier.'; return; }
+    dosUpsert(dn, ind, { client: $('dos-nc').value.trim() }); $('dos-new').hidden = true; $('dos-st').className = 'status ok'; $('dos-st').textContent = 'Dossier ' + dn + (ind ? '-' + ind : '') + ' ajouté.'; dosRender();
+  });
+  $('dos-l').addEventListener('change', function (e) {
+    var card = e.target.closest('[data-dk]'); if (!card) return; var k = card.dataset.dk;
+    if (e.target.dataset.dst) dosSet(k, null, e.target.value);
+    else if (e.target.dataset.ist) dosSet(k, e.target.closest('[data-di]').dataset.di, null, e.target.value);
+    e.target.style.color = stColor(e.target.value); dstUi();
+  });
+  $('dos-l').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return; var card = b.closest('[data-dk]'), k = card && card.dataset.dk;
+    if (b.dataset.dopen) { $('dos-ov').hidden = true; openIntervention(b.dataset.dopen); return; }
+    if (b.dataset.dind) { var n = Object.keys((DOS()[k] || {}).ind || {}).reduce(function (m, i) { return Math.max(m, +i || 0); }, 0) + 1; dosUpsert(k, String(n), {}); $('dos-st').className = 'status ok'; $('dos-st').textContent = 'Indice ' + k + '-' + n + ' ajouté.'; dosRender(); return; }
+    if (b.dataset.ddel) {
+      if (dosArm !== k) { dosArm = k; dosRender(); setTimeout(function () { if (dosArm === k) { dosArm = ''; dosRender(); } }, 3500); return; }
+      dosArm = ''; var d = DOS(); delete d[k]; dosSave(d); $('dos-st').className = 'status'; $('dos-st').textContent = 'Dossier ' + k + ' retiré de la liste (les rapports et fichiers ne sont pas touchés).'; dosRender(); dstUi();
+    }
+  });
+  function dosAsk() {                              // après l'envoi du rapport : proposer la mise à jour des statuts
+    var dos = clean(S.dossier), ind = clean(S.indice); if (!dos || S.travail) return;
+    var x = dosUpsert(dos, ind, { client: S.entreprise, objet: (S.oi && S.oi.objet) || '' }) || DOS()[dos]; if (!x) return;
+    var curI = ind && x.ind[ind] ? x.ind[ind].st : '', sugI = curI;
+    var hasCmd = (S.cmd || []).some(function (r) { return r.d || r.ref || r.photo; });
+    if (S.fini === 'oui') sugI = stPick(indStL, 'Terminé'); else if (hasCmd) sugI = stPick(indStL, 'Pièce en commande');
+    $('dosa-t').textContent = 'Rapport ' + (S.bi ? 'BI ' + S.bi + ' ' : '') + 'du dossier ' + dos + (ind ? '-' + ind : '') + (S.entreprise ? ' (' + S.entreprise + ')' : '') + '. ' + (S.fini === 'oui' ? 'Intervention terminée : indice proposé « Terminé ».' : hasCmd ? 'Pièces à commander : indice proposé « Pièce en commande ».' : 'Choisis les nouveaux statuts.');
+    $('dosa-d').textContent = dos; $('dosa-i').textContent = ind ? dos + '-' + ind : '(pas d\'indice)';
+    $('dosa-ds').innerHTML = stOpts(dosStL, x.st); $('dosa-is').innerHTML = stOpts(indStL, sugI || stPick(indStL, 'Intervention à programmer')); $('dosa-is').disabled = !ind;
+    $('dosa-ov').hidden = false;
+  }
+  $('dosa-no').addEventListener('click', function () { $('dosa-ov').hidden = true; });
+  $('dosa-ok').addEventListener('click', function () { dosSet(S.dossier, S.indice, $('dosa-ds').value, $('dosa-is').disabled ? null : $('dosa-is').value); $('dosa-ov').hidden = true; dstUi(); msg('Statuts mis à jour : dossier « ' + $('dosa-ds').value + ' »' + ($('dosa-is').disabled ? '' : ', indice « ' + $('dosa-is').value + ' »') + '.', 'ok'); });
+  /* listes de statuts modifiables (Réglages) */
+  function stListUi() {
+    [['c-dsl', dosStL, 'ds'], ['c-isl', indStL, 'is']].forEach(function (z) {
+      $(z[0]).innerHTML = z[1].map(function (p, i) { return '<div class="qo"><span><b>' + esc(p) + '</b></span><span><button class="btn small" type="button" data-' + z[2] + 'u="' + i + '" aria-label="Monter">↑</button> <button class="btn small" type="button" data-' + z[2] + 'x="' + i + '" aria-label="Retirer">✕</button></span></div>'; }).join('');
+    });
+  }
+  function stListSave() { prefs.dosSt = dosStL; prefs.indSt = indStL; savePrefs(); stListUi(); dstUi(); try { autoSync(); } catch (e) { } }
+  [['c-dsl', function () { return dosStL; }, 'ds'], ['c-isl', function () { return indStL; }, 'is']].forEach(function (z) {
+    $(z[0]).addEventListener('click', function (e) {
+      var l = z[1](), u = e.target.dataset[z[2] + 'u'], x = e.target.dataset[z[2] + 'x'];
+      if (u != null && +u > 0) { var a = l[+u]; l[+u] = l[+u - 1]; l[+u - 1] = a; stListSave(); }
+      else if (x != null && l.length > 1) { l.splice(+x, 1); stListSave(); }
+    });
+  });
+  $('c-dsadd').addEventListener('click', function () { var v = $('c-dsn').value.trim(); if (v && dosStL.indexOf(v) < 0) { dosStL.push(v); $('c-dsn').value = ''; stListSave(); } });
+  $('c-isadd').addEventListener('click', function () { var v = $('c-isn').value.trim(); if (v && indStL.indexOf(v) < 0) { indStL.push(v); $('c-isn').value = ''; stListSave(); } });
+  $('c-stdef').addEventListener('click', function () { dosStL.length = 0; DOS_DEF.forEach(function (x) { dosStL.push(x); }); indStL.length = 0; IND_DEF.forEach(function (x) { indStL.push(x); }); stListSave(); });
+  stListUi();
+
   /* ---------- rapport de travail (sans OI) ---------- */
   var DEFRT = ['Gestion des interventions', 'Gestion des frais', 'Aide au diagnostic', 'Assistance technique téléphonique', 'Préparation d\'intervention', 'Rédaction de rapports et de devis', 'Commande et approvisionnement de pièces', 'Gestion du stock de pièces et de l\'outillage', 'Réparation de cartes électroniques (atelier)', 'Remise en état de composants (atelier)', 'Essais et mise au point en atelier', 'Contrôle de règles de mesure Heidenhain', 'Réglage d\'hydraulique proportionnelle', 'Programmation automate (ST, Ladder)', 'Paramétrage de commande numérique', 'Étude et chiffrage', 'Documentation technique et schémas', 'Planification de la maintenance préventive', 'Formation suivie', 'Formation dispensée', 'Réunion et coordination', 'Entretien du véhicule et de l\'outillage', 'Veille technique', 'Déplacement'];
   var rtList = Array.isArray(prefs.rtObjs) && prefs.rtObjs.length ? prefs.rtObjs : DEFRT.slice();
@@ -2056,6 +2243,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
   function onChange(fromFname) {
     try { rtUi(); } catch (e) { }
     try { tlUi(); } catch (e) { }
+    try { dstUi(); } catch (e) { }
     try { curKeep(); } catch (e) { }
     var nm = fileName(); try { stUi(); } catch (e) { }
     try { agPrevSt(); $('f-gl').checked = !!S.glissant; } catch (e) { }
@@ -2634,6 +2822,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
     var first = S.days[0];
     var iso = oi.dateInter || '';
     if (!demo && first && !first.a1 && !first.a2 && !first.p1 && !first.p2 && iso) first.date = iso;
+  if (!demo) try { dosUpsert(S.dossier, S.indice, { client: S.entreprise, objet: [oi.objet, oi.type].filter(Boolean).join(' · ').slice(0, 120), date: frToIso(oi.dateInter || '') || '' }); } catch (e) { }
   syncFields(); renderDays(); renderOI(demo); onChange(); afterClient();
     setTimeout(function () { kmCalc(false); }, 50);
     if (!demo) setTimeout(function () { if (typeof agSync === 'function') agSync(false); if (typeof agPrevSt === 'function') agPrevSt(); }, 400);   // OI chargé -> programmé ou liste flottante
@@ -3081,6 +3270,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
       try { agSync(true); } catch (e) { }
       try { biConsume(bn(S.bi)); } catch (e) { }
       try { autoSync(); } catch (e) { }
+      try { if (clean(S.dossier) && !S.travail) setTimeout(dosAsk, 1200); } catch (e) { }
       var dl = null; try { dl = window.claude && window.claude.use ? await window.claude.use('downloads') : null; } catch (e) { dl = null; }
       if (!dl && window.AndroidBI) {
         var b64 = await new Promise(function (res, rej) { var fr = new FileReader(); fr.onload = function () { res(String(fr.result).split(',')[1] || ''); }; fr.onerror = rej; fr.readAsDataURL(blob); });
@@ -3709,6 +3899,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
     try {
       var j = await (await fetch('/api/pdfs?n=6', { cache: 'no-store' })).json();
       if (j.error) { box.innerHTML = '<div class="status err">' + esc(j.error) + '</div>'; return; }
+      try { (j.files || []).forEach(function (f) { var m = /(?:^|\D)(\d{4,6})\s*-\s*(\d{1,3})(?:\D|$)/.exec(f.name); if (m) dosUpsert(m[1], m[2], {}); }); } catch (e) { }
       box.innerHTML = j.files && j.files.length ? j.files.map(function (f) {
         var d = new Date(f.mtime);
         return '<button class="btn small" type="button" style="justify-content:space-between;text-align:left" data-pdf="' + esc(f.name) + '"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis">' + esc(f.name) + '</span><span class="status" style="white-space:nowrap">' + pad2(d.getDate()) + '/' + pad2(d.getMonth() + 1) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + '</span></button>';
@@ -3733,7 +3924,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
   /* ---------- trois points : accès aux réglages concernés ---------- */
   (function () {
     var MAP = {
-      'tab-oi': { '1 · Ordre': ['Ordres d\'intervention'], '2 · Client': ['Numéros de rapports', 'Objets des rapports de travail'], '3 · Itinéraire': ['Départs et itinéraire', 'Véhicules'] },
+      'tab-oi': { '1 · Ordre': ['Ordres d\'intervention'], '2 · Client': ['Numéros de rapports', 'Statuts des dossiers', 'Objets des rapports de travail'], '3 · Itinéraire': ['Départs et itinéraire', 'Véhicules'] },
       'tab-bon': { '2 · Heures': ['Technicien'], '3 · Détail': ['Lignes du détail'], '6 · Photos': ['Objets des photos'], '8 · Fichier': ['Signature par défaut', 'Destinataires', 'Envoi par défaut', 'Dossier d\'enregistrement'] },
       'tab-fr': { 'Note de frais': ['Forfaits'], 'Lignes': ['Forfaits'], 'Valider': ['Notes de frais'], 'Envois': ['Notes de frais', 'Envoi par défaut'], 'Synthèse': ['Répertoire de travail'] }
     };
@@ -4503,7 +4694,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
   var ALLDIRS = [P_CG, P_CU, P_OI, P_RAP, P_BCK, P_GES], GLOB = 'Configuration globale.xls', AGF = 'Agenda.xls', NDFBCK = 'Note de frais en cours.ndf';
   var OLD_WK = 'gestion intervention', OLD_PHO = 'photos notes de frais', OLD_RAP = "rapports d'interventions";
   var WKDIR = P_GES, D_PHO = P_RAP, D_RAP = P_RAP, SYN = 'Synthèse interventions.xls', XLSMIME = 'application/vnd.ms-excel';
-  var APPVER = {"v": "111", "d": "18/10/2026 21:46", "h": "51e2bbe"};
+  var APPVER = {"v": "112", "d": "18/10/2026 23:55", "h": "578843e"};
   try { $('ver-wm').textContent = 'v' + APPVER.v + ' · ' + APPVER.d; } catch (e) { }
   function wmPlace() {                           // en haut de page, sous le menu, et défile avec la page
     try { var n = document.querySelector('nav.tabs'), sp = document.querySelector('.tabs-sp'), w = document.querySelector('.ver-wm'); if (!n || !w || window.scrollY > 5) return; w.style.marginTop = '0px'; var d = Math.round(n.getBoundingClientRect().bottom + 4 - w.getBoundingClientRect().top); w.style.marginTop = d + 'px'; } catch (e) { }
@@ -4768,9 +4959,9 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
     return [{ name: 'Synthèse', rows: syn }, { name: 'Tableau des interventions', rows: interTable() }].concat(journalSheets()).concat([{ name: 'Lots de numéros', rows: nr }, { name: 'Numéros utilisés', rows: used }]);
   }
   var GLOB_IDS = ['Destinataires', 'Forfaits', 'Objets photos', 'Lignes détail', 'Machines', 'Emails clients'];
-  function userSheets() { return CATS.filter(function (c) { return GLOB_IDS.indexOf(c.id) < 0 && c.id !== 'Agenda' && c.id !== 'Projets' && c.id !== 'Tâches' && c.id !== 'Notes de frais'; }).map(function (c) { return { name: c.id, rows: c.exp() }; }); }
+  function userSheets() { return CATS.filter(function (c) { return GLOB_IDS.indexOf(c.id) < 0 && c.id !== 'Agenda' && c.id !== 'Projets' && c.id !== 'Tâches' && c.id !== 'Dossiers' && c.id !== 'Notes de frais'; }).map(function (c) { return { name: c.id, rows: c.exp() }; }); }
   function globSheets() { return CATS.filter(function (c) { return GLOB_IDS.indexOf(c.id) >= 0; }).map(function (c) { return { name: c.id, rows: c.exp() }; }); }
-  function agSheets() { return CATS.filter(function (c) { return c.id === 'Agenda' || c.id === 'Projets' || c.id === 'Tâches'; }).map(function (c) { return { name: c.id, rows: c.exp() }; }); }
+  function agSheets() { return CATS.filter(function (c) { return c.id === 'Agenda' || c.id === 'Projets' || c.id === 'Tâches' || c.id === 'Dossiers'; }).map(function (c) { return { name: c.id, rows: c.exp() }; }); }
   function sigBytes(d) { var m = /^data:[^;]+;base64,(.*)$/.exec(d || ''); if (!m) return null; var b = atob(m[1]), u = new Uint8Array(b.length); for (var i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
   function keysJson() { return JSON.stringify({ googleMapsKey: prefs.gkey || '', mailNotesDeFrais: prefs.ndfMail || '', pdfMaxMo: prefs.pdfMax || '', sauvegardeMin: saveMin(), cheminNote: prefs.workPath || '', ocrAuto: prefs.ocrAuto !== false }, null, 1); }
   var assetsLast = {};
@@ -5945,6 +6136,15 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
       imp: function (rows) { var l = pjs(); l.forEach(function (p) { p.tasks = []; }); rows.slice(1).forEach(function (r) { var p = l.filter(function (x) { return x.id === r[0]; })[0]; if (!p || !r[3]) return; var d1 = isoOf(r[4]), d2 = isoOf(r[5]) || d1; if (!/^\d{4}-\d{2}-\d{2}$/.test(d1)) return; p.tasks.push({ id: r[2] || ('T' + newId()), nom: r[3], d1: d1, d2: d2, av: r[6] || '', st: r[7] || 'À faire', note: r[8] || '' }); }); lsSet(PJK, l); } },
     { id: 'Agenda', exp: function () { return [['Date', 'Début', 'Fin', 'Client', 'Adresse', 'N° dossier', 'Indice', 'Note', 'Id', 'Intervention liée', 'Projet', 'Glissante', 'Prévue le', 'Nature', 'Flottante']].concat(ag().map(function (e) { return [frDisp(e.date), e.h1 || '', e.h2 || '', e.client || '', e.adr || '', e.dos || '', e.ind || '', e.note || '', e.id, e.cid || '', e.pj || '', e.gl ? 'Oui' : '', e.orig ? frDisp(e.orig) : '', e.nat || '', !e.date && !e.done ? 'Oui' : '']; })); },
       imp: function (rows) { var l = rows.slice(1).filter(function (r) { return r[0] || r[14] === 'Oui'; }).map(function (r) { return { nat: r[13] || '', flot: r[14] === 'Oui', date: r[14] === 'Oui' ? '' : isoOf(r[0]), h1: r[1] || '', h2: r[2] || '', client: r[3] || '', adr: r[4] || '', dos: clean(r[5] || ''), ind: clean(r[6] || ''), note: r[7] || '', id: r[8] || (newId() + Math.random().toString(36).slice(2, 5)), cid: r[9] || '', pj: r[10] || '', gl: r[11] === 'Oui', orig: r[12] ? isoOf(r[12]) : '' }; }).filter(function (e) { return e.flot || /^\d{4}-\d{2}-\d{2}$/.test(e.date); }); lsSet(AGK, l); agBadge(); } },
+    { id: 'Dossiers', exp: function () {
+        var d = DOS(), rows = [['N° dossier', 'Statut dossier', 'Indice', 'Statut indice', 'Client', 'Objet', 'Date OI', 'Mis à jour']];
+        Object.keys(d).sort().forEach(function (k) { var x = d[k], is = Object.keys(x.ind || {}).sort(function (a, b) { return (+a || 0) - (+b || 0); });
+          if (!is.length) rows.push([k, x.st, '', '', x.client || '', x.objet || '', '', x.maj || '']);
+          is.forEach(function (i) { var y = x.ind[i]; rows.push([k, x.st, i, y.st, x.client || '', y.objet || x.objet || '', y.date || '', y.maj || x.maj || '']); }); });
+        return rows; },
+      imp: function (rows) { var d = {}; rows.slice(1).forEach(function (r) { var k = clean(r[0]); if (!k) return; var x = d[k] || (d[k] = { st: r[1] || stPick(dosStL, 'En cours'), client: r[4] || '', objet: '', maj: r[7] || '', ind: {} }); if (r[2]) x.ind[clean(r[2])] = { st: r[3] || stPick(indStL, 'Intervention à programmer'), objet: r[5] || '', date: r[6] || '', maj: r[7] || '' }; else x.objet = r[5] || ''; }); lsSet('bi.dossiers', d); prefs.dosSeeded = 1; savePrefs(); try { dstUi(); } catch (e) { } } },
+    { id: 'Statuts', exp: function () { return [['Type', 'Statut']].concat(dosStL.map(function (x) { return ['Dossier', x]; })).concat(indStL.map(function (x) { return ['Indice', x]; })); },
+      imp: function (rows) { var a = rows.slice(1).filter(function (r) { return r[0] === 'Dossier' && r[1]; }).map(function (r) { return r[1]; }), b = rows.slice(1).filter(function (r) { return r[0] === 'Indice' && r[1]; }).map(function (r) { return r[1]; }); if (a.length) { dosStL.length = 0; a.forEach(function (x) { dosStL.push(x); }); } if (b.length) { indStL.length = 0; b.forEach(function (x) { indStL.push(x); }); } prefs.dosSt = dosStL; prefs.indSt = indStL; savePrefs(); try { stListUi(); } catch (e) { } } },
     { id: 'Forfaits', exp: function () { return [['Nom', 'Montant (€)']].concat(forfaits.map(function (x) { return [x.n, Number(x.a) || 0]; })); },
       imp: function (rows) { var l = rows.slice(1).filter(function (r) { return r[0]; }).map(function (r) { return { n: r[0], a: numFr(r[1]) }; }); forfaits = l; saveForf(); } },
     { id: 'Objets rapports de travail', exp: function () { return [['Objet']].concat(rtList.map(function (x) { return [x]; })); },
@@ -6208,6 +6408,16 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
       'Le bouton « Exemple : OI 37785-3 » ne programme plus rien (sa date d\'intervention est le lundi 05/10/2026) : les programmations au 5 venant de cet exemple se suppriment avec 🗑.',
       'Sur une intervention programmée : ▶ ouvre l\'intervention (ou en crée une nouvelle préremplie), 🗺 itinéraire Google Maps, G ajoute à Google Agenda ; toucher le texte pour modifier ou supprimer. « Exporter l\'agenda (.ics) » : à ouvrir pour l\'ajouter à l\'agenda du téléphone.',
       'L\'agenda est sauvegardé dans le fichier utilisateur (onglet Agenda) et modifiable dans l\'éditeur de tableaux.'] },
+    { t: 'Dossiers et indices : statuts', go: ['oi', '2 · Client'], k: 'dossier indice statut devis en cours terminé pièce en commande attente devis règlement programmer liste suivi', p: [
+      '🗂 Dossiers (carte de l\'intervention, ou « 🗂 Tous les dossiers » dans « 2 · Client et dossier ») : la liste des n° de dossier et de leurs indices, chacun avec son statut, à changer d\'un appui dans la liste déroulante.',
+      'Statut du dossier : Devis, En cours, Terminé. Statut de l\'indice : Pièce en commande, Attente de devis, Attente de règlement, Intervention à programmer, Terminé. Les deux listes se modifient dans Réglages → « Statuts des dossiers et des indices » (↑ monter, ✕ retirer, « Listes par défaut »).',
+      'Chaque OI ouvert ajoute (ou complète) son dossier et son indice : dossier « En cours », indice « Intervention à programmer ». Avec l\'appli Android, les OI téléchargés dont le nom contient 37785-3 sont aussi ajoutés.',
+      'À l\'envoi du rapport, une fenêtre propose la mise à jour des statuts : indice « Terminé » si l\'intervention est terminée, « Pièce en commande » s\'il y a des pièces à commander. « Ne rien changer » laisse tout tel quel.',
+      'Recherche (n°, client) et filtre par statut en haut de la liste ; « Ouvrir l\'intervention » rouvre le rapport correspondant ; « + Dossier », « + Indice » et 🗑 (deux appuis) pour gérer la liste à la main. La liste est sauvegardée dans Agenda.xls (onglet Dossiers).'] },
+    { t: 'Arborescence des fichiers', go: ['cfg', 'Répertoire'], k: 'arborescence dossiers fichiers répertoire documents gestion interventions config données rapports backup gestion oi xls bck ndf pdf', p: [
+      'Tout est rangé dans Documents/Gestion interventions (appli Android, QPython, ou Chrome avec le répertoire choisi). Pour une sauvegarde ailleurs (Drive, ordinateur), copie ce dossier en entier.',
+      'Écrits tout de suite : PDF des bons, rapports de travail et notes de frais, photos des justificatifs, .ndf des notes validées, copie des OI. Toutes les 5 min, en quittant et au démarrage : les .bck des interventions modifiées, la note de frais en cours, les .xls, la signature, le logo et les clés.',
+      'Hors de ces dossiers : la mémoire interne (saisie au fil de l\'eau, réglages, journal, interventions en cours, bibliothèques gardées pour le hors-ligne), rechargeable depuis config/ et données/.'], pre: "/storage/emulated/0/\n├── Download/                         source des OI (lecture seule)\n│   └── *.pdf                         OI téléchargés depuis Gmail\n└── Documents/\n    └── Gestion interventions/\n        ├── .migration-faite          repère : anciens dossiers recopiés\n        ├── appli/\n        │   └── interventions.html    (facultatif) page plus récente, prise en priorité par l'appli Android\n        ├── config/\n        │   ├── global/               commun à tous les techniciens\n        │   │   └── Configuration globale.xls   Destinataires, Forfaits, Objets photos,\n        │   │                                   Lignes détail, Machines, Emails clients\n        │   └── utilisateur/          propre au technicien\n        │       ├── Utilisateur <nom>.xls       Identité, Général, Notes de frais, Véhicules, Départs,\n        │       │                               Numéros BI, Statuts, Objets rapports de travail\n        │       ├── signature.png     signature par défaut\n        │       ├── logo.jpg          logo des PDF\n        │       └── cles.json         clé Google Maps, mail des notes de frais, réglages\n        └── données/\n            ├── OI/\n            │   └── <OI>.pdf          copie de chaque OI ouvert\n            ├── rapports/\n            │   ├── mm_aaaa/          ex : 10_2026\n            │   │   ├── <BI>-BI-<dossier>-<machine>-<client>.pdf    bons d'intervention\n            │   │   ├── <BI>-RT-<date>-<type de travail>.pdf        rapports de travail\n            │   │   ├── Note de frais S<sem> <date> <client>.pdf    note validée\n            │   │   └── Notes de frais <tech> <du> au <au>.pdf      envoi groupé (20 notes max)\n            │   └── justificatifs/\n            │       └── mm_aaaa/\n            │           └── NDF <date> <client> L<ligne> <nature> <n>.jpg   tickets\n            ├── backup/\n            │   ├── <intervention>.bck                une sauvegarde complète par intervention\n            │   ├── Note de frais en cours.ndf        note en cours, avec photos\n            │   └── notes de frais validées/\n            │       └── NDF-<du>_<au>-<client>.ndf    une par note validée\n            └── gestion/\n                ├── Agenda.xls                Agenda, Projets, Tâches, Dossiers (statuts)\n                └── Synthèse interventions.xls    Synthèse, Tableau des interventions, Interventions,\n                                                  Récaps, Notes de frais, Lots et numéros utilisés" },
     { t: 'Remplir depuis un rapport existant', go: ['oi', '1 · Ordre'], k: 'remplir reprendre rapport existant copier précédent modèle bck pdf même machine même client', p: [
       '📋 Remplir depuis un rapport (carte de l\'intervention en haut de « OI & client ») : choisis un rapport de la liste (y compris les terminés et envoyés), ou ouvre un PDF de rapport ou un .bck.',
       'Ce qui est déjà rempli dans l\'intervention ouverte est gardé ; seuls les champs vides sont repris : client, adresse, email, dossier, machine, détail, état, pièces, trajet, photos… Ne sont jamais repris : les dates, les heures, le nom du signataire, les signatures et le n° de BI (le suivant de tes lots est pris).',
@@ -6289,7 +6499,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
     }, 40);
   }
   $('help-steps').innerHTML = HELP.map(function (h, i) {
-    return '<details data-h="' + i + '"><summary><span class="n">' + (i + 1) + '</span><span>' + esc(h.t) + '</span></summary><div class="hb"><ul>' + h.p.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' +
+    return '<details data-h="' + i + '"><summary><span class="n">' + (i + 1) + '</span><span>' + esc(h.t) + '</span></summary><div class="hb"><ul>' + h.p.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' + (h.pre ? '<pre class="tree">' + esc(h.pre) + '</pre>' : '') +
       '<button class="btn small" type="button" data-hg="' + i + '">Aller à cette étape →</button></div></details>';
   }).join('');
   $('help-steps').addEventListener('click', function (e) { var g = e.target.dataset.hg; if (g != null) helpGo(HELP[+g].go); });
