@@ -31,10 +31,10 @@ import java.util.Map;
 
 /** Le même service que le serveur QPython (/api/…), mais dans l'appli : fichiers dans Documents/Gestion interventions. */
 class Api {
-    static final String VERSION = "appli-1.0";
+    static final String VERSION = "appli-1.1";
     static final String[] SUBS = {"", "Gestion interventions", "Gestion interventions/config/global", "Gestion interventions/config/utilisateur",
             "Gestion interventions/données/OI", "Gestion interventions/données/rapports", "Gestion interventions/données/backup",
-            "Gestion interventions/données/gestion"};
+            "Gestion interventions/données/gestion", "Gestion interventions/appli"};
     static final String SHIM = "<script>(function(){var A=window.AndroidApi;if(!A)return;"
             + "var of=window.fetch.bind(window);"
             + "window.fetch=function(u,o){var s=typeof u==='string'?u:(u&&u.url)||'';"
