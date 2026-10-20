@@ -343,8 +343,14 @@ body.rt .no-rt, body.rt #s-oi { display: none !important; }
 .xe-grid td.sel { outline: 2px solid var(--accent); outline-offset: -2px; }
 .xe-grid .colsel { background: rgba(242, 127, 12, .12); }
 .xe-grid.ro td { cursor: default; color: var(--muted); }
-.over .box { background: var(--surface); border-radius: 8px; flex: 1; overflow: auto; padding: 10px; display: flex; justify-content: center; align-items: flex-start; }
-.over .pv canvas { max-width: 100%; height: auto; background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.3); }
+.over .box { background: var(--surface); border-radius: 8px; flex: 1; overflow: auto; padding: 10px; display: block; touch-action: pan-x pan-y; overscroll-behavior: contain; }
+.over .box > :not(.pv) { margin: 0 auto; }
+.over .pv { width: max-content; min-width: 100%; margin: 0 auto; }
+.over .pv canvas { display: block; background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.3); }
+.pz { display: flex; flex: none; border: 1px solid rgba(255,255,255,.35); border-radius: 8px; overflow: hidden; }
+.pz button { background: transparent; color: #fff; border: 0; font: inherit; font-size: 15px; min-width: 36px; height: 34px; padding: 0 6px; cursor: pointer; }
+.pz #pz-v { font-size: 12px; min-width: 50px; border-inline: 1px solid rgba(255,255,255,.25); font-variant-numeric: tabular-nums; }
+.pz button:active { background: rgba(255,255,255,.15); }
 .over .row { justify-content: space-between; }
 #sign-ov { z-index: 30; }
 .over .obar { gap: 8px; flex-wrap: nowrap; padding-bottom: env(safe-area-inset-bottom, 0px); }
@@ -876,7 +882,7 @@ body.rt .no-rt, body.rt #s-oi { display: none !important; }
 </div>
 
 <div class="over" id="over" hidden>
-  <div class="row" style="flex-wrap:nowrap;gap:10px"><span style="color:#fff;font-size:14px;flex:1;min-width:0" id="over-t">Aperçu de la page 1</span><button class="gauge" id="pv-gauge" type="button" title="Taille du fichier — toucher pour changer la compression"><span class="gbar"><i id="pv-gi"></i></span><span id="pv-gl">…</span></button></div>
+  <div class="row" style="flex-wrap:nowrap;gap:10px"><span style="color:#fff;font-size:14px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" id="over-t">Aperçu de la page 1</span><span class="pz"><button type="button" id="pz-m" title="Dézoomer" aria-label="Dézoomer">−</button><button type="button" id="pz-v" title="Ajuster à la largeur">100 %</button><button type="button" id="pz-p" title="Zoomer" aria-label="Zoomer">+</button></span><button class="gauge" id="pv-gauge" type="button" title="Taille du fichier — toucher pour changer la compression"><span class="gbar"><i id="pv-gi"></i></span><span id="pv-gl">…</span></button></div>
   <div class="status" id="pv-gw" hidden style="color:#ffd27a;margin-top:-6px"></div>
   <div class="box" id="over-box"></div>
   <div class="row obar"><button class="btn" id="over-x" type="button">Fermer</button><button class="btn" id="over-sign" type="button">✍ Signer</button><button class="btn" id="over-mail" type="button" hidden>✉ Envoyer</button><button class="btn primary" id="over-gen" type="button">Générer</button></div>
@@ -3382,12 +3388,67 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
     var pdf = await lib.getDocument({ data: bytes.slice(0) }).promise, w = Math.min(window.innerWidth - 48, 760), dpr = Math.min(window.devicePixelRatio || 1, 2);
     var box = $('over-box'); box.innerHTML = ''; var wrap = document.createElement('div'); wrap.className = 'pv'; box.appendChild(wrap); $('over').hidden = false;
     $('over-t').textContent = (mode === 'ndf' ? 'Aperçu de la note de frais · ' : mode === 'gantt' ? 'Planning des projets · ' : 'Aperçu du bon · ') + pdf.numPages + ' page' + (pdf.numPages > 1 ? 's' : '');
+    PZ.pdf = pdf; PZ.w = w; PZ.z = 1; PZ.wrap = wrap; PZ.pages = []; PZ.gen++; box.scrollTop = 0; box.scrollLeft = 0; pzLbl();
     for (var n = 1; n <= pdf.numPages; n++) {
-      var page = await pdf.getPage(n), vp0 = page.getViewport({ scale: 1 }), vp = page.getViewport({ scale: (w / vp0.width) * dpr });
-      var cv = document.createElement('canvas'); cv.width = vp.width; cv.height = vp.height; cv.style.width = w + 'px'; wrap.appendChild(cv);
-      await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
+      var page = await pdf.getPage(n), vp0 = page.getViewport({ scale: 1 });
+      var cv = document.createElement('canvas'); cv.style.width = w + 'px'; cv.style.height = (w * vp0.height / vp0.width) + 'px'; wrap.appendChild(cv);
+      PZ.pages.push({ page: page, cv: cv, r: vp0.height / vp0.width, w0: vp0.width });
+    }
+    await pzRender();
+  }
+  // ---- Zoom de l'aperçu PDF : boutons − / + / ajuster, pincement à deux doigts, double-tap, Ctrl+molette ----
+  var PZ = { pdf: null, w: 0, z: 1, wrap: null, pages: [], gen: 0, t: 0 }, PZMIN = 0.5, PZMAX = 6;
+  function pzLbl() { $('pz-v').textContent = Math.round(PZ.z * 100) + ' %'; }
+  async function pzRender() {   // re-dessine chaque page à la résolution du zoom courant (net), en limitant la mémoire
+    var g = ++PZ.gen, dpr = Math.min(window.devicePixelRatio || 1, 2), cssW = PZ.w * PZ.z;
+    for (var i = 0; i < PZ.pages.length; i++) {
+      var p = PZ.pages[i], sc = cssW * dpr / p.w0, max = 14e6;
+      if (p.w0 * sc * p.w0 * p.r * sc > max) sc = Math.sqrt(max / (p.w0 * p.w0 * p.r));
+      if (p.sc === sc) continue;
+      var vp = p.page.getViewport({ scale: sc }), cv = document.createElement('canvas'); cv.width = Math.floor(vp.width); cv.height = Math.floor(vp.height);
+      try { await p.page.render({ canvas: cv, canvasContext: cv.getContext('2d'), viewport: vp }).promise; } catch (e) { console.warn('aperçu', e); continue; }
+      if (g !== PZ.gen) return;
+      cv.style.width = p.cv.style.width; cv.style.height = p.cv.style.height; p.cv.replaceWith(cv); p.cv = cv; p.sc = sc;
     }
   }
+  function pzSet(z, cx, cy) {   // cx, cy : point (relatif à la zone d'aperçu) qui doit rester immobile
+    var box = $('over-box'); z = Math.max(PZMIN, Math.min(PZMAX, z)); if (!PZ.pages.length) return;
+    var r = box.getBoundingClientRect(); if (cx == null) { cx = r.width / 2; cy = r.height / 2; }
+    var k = z / PZ.z, px = box.scrollLeft + cx, py = box.scrollTop + cy, ox = PZ.wrap.offsetLeft, oy = PZ.wrap.offsetTop;
+    PZ.z = z; var cssW = PZ.w * z;
+    PZ.pages.forEach(function (p) { p.cv.style.width = cssW + 'px'; p.cv.style.height = (cssW * p.r) + 'px'; });
+    box.scrollLeft = (px - ox) * k + PZ.wrap.offsetLeft - cx; box.scrollTop = (py - oy) * k + PZ.wrap.offsetTop - cy;
+    pzLbl(); clearTimeout(PZ.t); PZ.t = setTimeout(pzRender, 220);
+  }
+  (function () {
+    var box = $('over-box'), pin = null, tap = 0;
+    $('pz-m').addEventListener('click', function () { pzSet(PZ.z / 1.4); });
+    $('pz-p').addEventListener('click', function () { pzSet(PZ.z * 1.4); });
+    $('pz-v').addEventListener('click', function () { pzSet(1); box.scrollLeft = 0; });
+    function d(a, b) { return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); }
+    box.addEventListener('touchstart', function (e) {
+      if (e.touches.length === 2) {
+        var a = e.touches[0], b = e.touches[1], r = box.getBoundingClientRect();
+        pin = { d: d(a, b), z: PZ.z, cx: (a.clientX + b.clientX) / 2 - r.left, cy: (a.clientY + b.clientY) / 2 - r.top, s: 1 };
+        PZ.wrap.style.transformOrigin = (box.scrollLeft + pin.cx - PZ.wrap.offsetLeft) + 'px ' + (box.scrollTop + pin.cy - PZ.wrap.offsetTop) + 'px';
+        e.preventDefault(); return;
+      }
+      if (e.touches.length === 1) {   // double-tap : 100 % ↔ 250 %
+        var t = e.touches[0], now = Date.now();
+        if (now - tap < 300) { var r2 = box.getBoundingClientRect(); pzSet(PZ.z > 1.05 ? 1 : 2.5, t.clientX - r2.left, t.clientY - r2.top); tap = 0; e.preventDefault(); }
+        else tap = now;
+      }
+    }, { passive: false });
+    box.addEventListener('touchmove', function (e) {
+      if (!pin || e.touches.length !== 2) return; e.preventDefault();
+      var s = d(e.touches[0], e.touches[1]) / pin.d; s = Math.max(PZMIN / pin.z, Math.min(PZMAX / pin.z, s)); pin.s = s;
+      PZ.wrap.style.transform = 'scale(' + s + ')'; $('pz-v').textContent = Math.round(pin.z * s * 100) + ' %';
+    }, { passive: false });
+    function end() { if (!pin) return; var p = pin; pin = null; PZ.wrap.style.transform = ''; tap = 0; pzSet(p.z * p.s, p.cx, p.cy); }
+    box.addEventListener('touchend', function (e) { if (e.touches.length < 2) end(); });
+    box.addEventListener('touchcancel', end);
+    box.addEventListener('wheel', function (e) { if (!e.ctrlKey) return; e.preventDefault(); var r = box.getBoundingClientRect(); pzSet(PZ.z * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientX - r.left, e.clientY - r.top); }, { passive: false });
+  })();
   async function showPreview() {
     var lib; try { lib = await ensurePdfLib(); } catch (e) { lib = null; }
     if (!lib) { msg('Aperçu indisponible (lecteur PDF non chargé). Génère le PDF pour le vérifier.', 'err'); return; }
@@ -4712,7 +4773,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
   var ALLDIRS = [P_CG, P_CU, P_OI, P_RAP, P_BCK, P_GES], GLOB = 'Configuration globale.xls', AGF = 'Agenda.xls', NDFBCK = 'Note de frais en cours.ndf';
   var OLD_WK = 'gestion intervention', OLD_PHO = 'photos notes de frais', OLD_RAP = "rapports d'interventions";
   var WKDIR = P_GES, D_PHO = P_RAP, D_RAP = P_RAP, SYN = 'Synthèse interventions.xls', XLSMIME = 'application/vnd.ms-excel';
-  var APPVER = {"v": "113", "d": "19/10/2026 00:42", "h": "6b94ce9"};
+  var APPVER = {"v": "114", "d": "20/10/2026 22:11", "h": "df16c13"};
   try { $('ver-wm').textContent = 'v' + APPVER.v + ' · ' + APPVER.d; } catch (e) { }
   function wmPlace() {                           // en haut de page, sous le menu, et défile avec la page
     try { var n = document.querySelector('nav.tabs'), sp = document.querySelector('.tabs-sp'), w = document.querySelector('.ver-wm'); if (!n || !w || window.scrollY > 5) return; w.style.marginTop = '0px'; var d = Math.round(n.getBoundingClientRect().bottom + 4 - w.getBoundingClientRect().top); w.style.marginTop = d + 'px'; } catch (e) { }
@@ -6402,9 +6463,10 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
       'Complète désignation, référence, quantité et lien : page « Pièces à commander » et cadre autour de la photo dans le PDF.',
       '🔍 Google Lens à côté de la photo : recherche de la pièce par l\'image dans un nouvel onglet.',
       'Sans aucune pièce renseignée, le tableau n\'est pas ajouté au PDF.'] },
-    { t: 'Générer et envoyer le bon', go: ['bon', '8 · Fichier'], k: 'générer pdf envoyer mail destinataire compression aperçu signature client rapport taille maximale jauge', p: [
+    { t: 'Générer et envoyer le bon', go: ['bon', '8 · Fichier'], k: 'générer pdf envoyer mail destinataire compression aperçu zoom pincer agrandir signature client rapport taille maximale jauge', p: [
       'Choisis les destinataires et la 🗜 compression (le dernier choix est gardé) ; règle si besoin une taille maximale du PDF.',
       '« Aperçu » pour vérifier : la jauge en haut indique la part de la taille maximale (orange dès 75 %, rouge au-delà) ; touche-la pour changer la compression.',
+      'Zoom dans l\'aperçu (bon, note de frais, planning, PDF ouvert) : écarte deux doigts pour zoomer, double-tape pour passer de 100 % à 250 % (au point touché) et revenir, ou utilise − / + en haut ; touche le pourcentage pour réajuster à la largeur. Zoomé, fais glisser un doigt pour te déplacer dans la page (jusqu\'à 600 %).',
       '« Générer le PDF » : signature du client, alerte des champs manquants et d\'un fichier trop lourd.',
       'À chaque génération, une copie du PDF est enregistrée automatiquement dans « Gestion interventions / données / rapports / mois_annee » (ex : 10_2026, d\'après le 1er jour de l\'intervention), quel que soit l\'envoi par défaut ; le partage s\'ouvre en plus si « Partager » est coché.',
       'Statut de l\'intervention (section 8, colonne « Statut » des .xls) : Terminée (vert), Pièces à commander (rouge) ou En cours (noir), d\'après « Intervention terminée » (section 4) et les pièces à commander (section 7).',
