@@ -360,6 +360,7 @@ body.rt .no-rt, body.rt #s-oi { display: none !important; }
 .over .box { background: var(--surface); border-radius: 8px; flex: 1; overflow: auto; padding: 10px; display: block; touch-action: pan-x pan-y; overscroll-behavior: contain; }
 .over .box > :not(.pv) { margin: 0 auto; }
 #tab-oi > section, #tab-bon > section, #tab-fr > section, #tab-cfg > section { content-visibility: auto; contain-intrinsic-size: auto 320px; }   /* sections hors écran : ni mise en page ni dessin → défilement plus fluide */
+.over .pv-part { justify-self: stretch; width: 0; min-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; font-weight: 600; padding-top: 6px; }
 .over .pv { width: max-content; min-width: 100%; margin: 0 auto; }
 .over .pv canvas { display: block; background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.3); }
 .pz { display: flex; flex: none; border: 1px solid rgba(255,255,255,.35); border-radius: 8px; overflow: hidden; }
@@ -651,7 +652,7 @@ body.rt .no-rt, body.rt #s-oi { display: none !important; }
     <div class="ag-views" id="fr-flt" role="tablist"></div>
     <div id="fr-notes" class="nf-l"></div>
     <div class="status" id="fr-sum"></div>
-    <div class="row"><button class="btn primary" id="fr-mail" type="button">✉ Envoyer les notes cochées</button><button class="btn small" id="fr-bpdf" type="button">📄 PDF sans envoyer</button></div>
+    <div class="row"><button class="btn primary" id="fr-mail" type="button">✉ Envoyer les notes cochées</button><button class="btn small" id="fr-bpv" type="button">👁 Aperçu</button><button class="btn small" id="fr-bpdf" type="button">📄 PDF sans envoyer</button></div>
     <div class="status" id="fr-sst" role="status"></div>
     <button class="btn primary" id="fr-share" type="button" hidden>📤 Partager maintenant</button>
   </section>
@@ -3422,17 +3423,22 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
   var overMode = 'bi';
   async function renderPdf(bytes, mode) {
     var lib; try { lib = await ensurePdfLib(); } catch (e) { throw new Error('lecteur PDF non chargé (connexion ?)'); }
-    overMode = mode; pvGauge(bytes.length); $('over-sign').hidden = mode !== 'bi'; $('over-mail').hidden = mode !== 'ndf' && mode !== 'gantt'; $('over-mail').textContent = mode === 'ndf' ? '✔ Valider la note' : '✉ Envoyer'; $('over-gen').hidden = mode === 'view'; $('pv-gauge').hidden = mode === 'view' || mode === 'gantt';
-    $('over-gen').textContent = mode === 'gantt' ? '💾 Enregistrer' : 'Générer';
-    var pdf = await lib.getDocument({ data: bytes.slice(0) }).promise, w = Math.min(window.innerWidth - 48, 760), dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var docs = Array.isArray(bytes) ? bytes : [{ bytes: bytes }], big = Math.max.apply(null, docs.map(function (d) { return d.bytes.length; }));
+    overMode = mode; pvGauge(big); $('over-sign').hidden = mode !== 'bi'; $('over-mail').hidden = mode !== 'ndf' && mode !== 'gantt' && mode !== 'grp'; $('over-mail').textContent = mode === 'ndf' ? '✔ Valider la note' : mode === 'grp' ? '✉ Envoyer' : '✉ Envoyer'; $('over-gen').hidden = mode === 'view'; $('pv-gauge').hidden = mode === 'view' || mode === 'gantt';
+    $('over-gen').textContent = mode === 'gantt' ? '💾 Enregistrer' : mode === 'grp' ? '📄 PDF seul' : 'Générer';
+    var w = Math.min(window.innerWidth - 48, 760), np = 0;
     var box = $('over-box'); box.innerHTML = ''; var wrap = document.createElement('div'); wrap.className = 'pv'; box.appendChild(wrap); $('over').hidden = false;
-    $('over-t').textContent = (mode === 'ndf' ? 'Aperçu de la note de frais · ' : mode === 'gantt' ? 'Planning des projets · ' : 'Aperçu du bon · ') + pdf.numPages + ' page' + (pdf.numPages > 1 ? 's' : '');
-    PZ.pdf = pdf; PZ.w = w; PZ.z = 1; PZ.wrap = wrap; PZ.pages = []; PZ.gen++; box.scrollTop = 0; box.scrollLeft = 0; pzLbl();
-    for (var n = 1; n <= pdf.numPages; n++) {
-      var page = await pdf.getPage(n), vp0 = page.getViewport({ scale: 1 });
-      var cv = document.createElement('canvas'); cv.style.width = w + 'px'; cv.style.height = (w * vp0.height / vp0.width) + 'px'; wrap.appendChild(cv);
-      PZ.pages.push({ page: page, cv: cv, r: vp0.height / vp0.width, w0: vp0.width });
+    PZ.w = w; PZ.z = 1; PZ.wrap = wrap; PZ.pages = []; PZ.gen++; box.scrollTop = 0; box.scrollLeft = 0; pzLbl();
+    for (var di = 0; di < docs.length; di++) {
+      var pdf = await lib.getDocument({ data: docs[di].bytes.slice(0) }).promise; PZ.pdf = pdf; np += pdf.numPages;
+      if (docs.length > 1) { var hd = document.createElement('div'); hd.className = 'pv-part'; hd.textContent = 'PDF ' + (di + 1) + '/' + docs.length + (docs[di].notes ? ' · ' + docs[di].notes.length + ' note' + (docs[di].notes.length > 1 ? 's' : '') : ''); wrap.appendChild(hd); }
+      for (var n = 1; n <= pdf.numPages; n++) {
+        var page = await pdf.getPage(n), vp0 = page.getViewport({ scale: 1 });
+        var cv = document.createElement('canvas'); cv.style.width = w + 'px'; cv.style.height = (w * vp0.height / vp0.width) + 'px'; wrap.appendChild(cv);
+        PZ.pages.push({ page: page, cv: cv, r: vp0.height / vp0.width, w0: vp0.width });
+      }
     }
+    $('over-t').textContent = (mode === 'ndf' ? 'Aperçu de la note de frais · ' : mode === 'grp' ? 'Envoi groupé' + (docs.length > 1 ? ' (' + docs.length + ' PDF)' : '') + ' · ' : mode === 'gantt' ? 'Planning des projets · ' : 'Aperçu du bon · ') + np + ' page' + (np > 1 ? 's' : '');
     await pzRender();
   }
   // ---- Zoom de l'aperçu PDF : boutons − / + / ajuster, pincement à deux doigts, double-tap, Ctrl+molette ----
@@ -3508,8 +3514,8 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
   }
   $('btn-prev').addEventListener('click', showPreview);
   $('over-sign').addEventListener('click', function () { signOnly = true; $('sg-st').textContent = ''; $('sign-ov').hidden = false; padCli.resize(); });
-  $('over-gen').addEventListener('click', function () { $('over').hidden = true; if (overMode === 'gantt') ganttSave(false); else if (overMode === 'ndf') ndfGenerate(false); else $('btn-gen').click(); });
-  $('over-mail').addEventListener('click', function () { $('over').hidden = true; if (overMode === 'gantt') ganttSave(true); else ndfValidate(); });
+  $('over-gen').addEventListener('click', function () { $('over').hidden = true; if (overMode === 'grp') nfSend(false); else if (overMode === 'gantt') ganttSave(false); else if (overMode === 'ndf') ndfGenerate(false); else $('btn-gen').click(); });
+  $('over-mail').addEventListener('click', function () { $('over').hidden = true; if (overMode === 'grp') nfSend(true); else if (overMode === 'gantt') ganttSave(true); else ndfValidate(); });
   $('over-x').addEventListener('click', function () { $('over').hidden = true; });
 
   function copy(text, btn) {
@@ -4580,7 +4586,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
   }
   var pendingShare = null;
   function frSt(t, c) { var e = $('fr-st'); e.className = 'status' + (c ? ' ' + c : ''); e.textContent = t; }
-  function frBusy(b) { ['fr-gen', 'fr-mail', 'fr-pv', 'fr-val', 'fr-bpdf'].forEach(function (id) { $(id).disabled = b; }); }
+  function frBusy(b) { ['fr-gen', 'fr-mail', 'fr-pv', 'fr-val', 'fr-bpdf', 'fr-bpv'].forEach(function (id) { $(id).disabled = b; }); }
   function tooBig(bytes) { return pdfMax() && bytes.length > pdfMax() ? ' ⚠ Au-dessus du maximum de ' + String(prefs.pdfMax).replace('.', ',') + ' Mo : choisis une compression plus forte (🗜 dans l\'onglet Intervention).' : ''; }
   async function ndfGenerate() {                   // PDF de la note en cours, sans la valider
     frBusy(true); frSt('Génération…'); await paintWait();
@@ -4704,7 +4710,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
     var sel = nfSelected(), tot = sel.reduce(function (s, n) { return s + (Number(n.total) || 0); }, 0), np = Math.ceil(sel.length / ndfMaxN());
     $('fr-sum').textContent = c.saisie ? sel.length + ' note(s) cochée(s) sur ' + c.saisie + ' saisie(s) · ' + euro(tot) + (sel.length ? ' → ' + np + ' PDF (' + ndfMaxN() + ' notes maximum par PDF)' : '') : 'Aucune note saisie à envoyer. Valide d\'abord les notes en cours.';
     $('fr-mail').textContent = '✉ Envoyer ' + (sel.length ? sel.length + ' note(s)' + (np > 1 ? ' en ' + np + ' PDF' : '') : 'les notes cochées');
-    $('fr-mail').disabled = $('fr-bpdf').disabled = !sel.length;
+    $('fr-mail').disabled = $('fr-bpdf').disabled = $('fr-bpv').disabled = !sel.length;
   }
   function ndfMaxN() { var n = parseInt(prefs.ndfMax, 10); return n > 0 ? n : 20; }
   function nfSelected() { return NOTES.filter(function (n) { return n.st === 'saisie' && !nfOff[n.id]; }).sort(function (a, b) { return String(a.from).localeCompare(String(b.from)) || String(a.id).localeCompare(String(b.id)); }); }
@@ -4735,6 +4741,19 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
       frSt('✎ Note ' + n.nid + ' reprise : modifie-la puis ✔ Valider pour la remettre dans les envois.', 'warn'); nfSst(''); nfRender(); return;
     }
   });
+  var nfGrp = null;                                 // PDF de l'envoi groupé déjà préparés (aperçu → envoi sans tout refaire)
+  function nfGrpKey(sel, prof) { return prof + '|' + ndfMaxN() + '|' + sel.map(function (n) { return n.id + ':' + (n.total || 0) + ':' + (n.saved || n.maj || ''); }).join(','); }
+  async function nfPdfsC(sel, prof) {
+    var k = nfGrpKey(sel, prof); if (nfGrp && nfGrp.k === k && Date.now() - nfGrp.t < 600000) return nfGrp.files;
+    var f = await nfPdfs(sel, prof); nfGrp = { k: k, files: f, t: Date.now() }; return f;
+  }
+  async function nfPreview() {
+    var sel = nfSelected(); if (!sel.length) { nfSst('Aucune note cochée.', 'warn'); return; }
+    frBusy(true); nfSst('Préparation de l\'aperçu de l\'envoi groupé…'); await paintWait();
+    try { var files = await nfPdfsC(sel, curQ()); nfSst('Préparation de l\'aperçu de l\'envoi groupé…'); await renderPdf(files, 'grp'); nfSst(''); }
+    catch (e) { nfSst('Aperçu impossible : ' + ((e && e.message) || e), 'err'); }
+    finally { frBusy(false); nfRender(); }
+  }
   async function nfPdfs(sel, prof) {               // regroupe les notes par PDF de ndfMaxN() notes au plus
     var max = ndfMaxN(), parts = Math.ceil(sel.length / max), out = [], tech = S.techNom || P('techNom');
     for (var p = 0; p < parts; p++) {
@@ -4762,7 +4781,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
     var sel = nfSelected(); if (!sel.length) { nfSst('Aucune note cochée.', 'warn'); return; }
     frBusy(true); $('fr-share').hidden = true;
     try {
-      var files = await nfPdfs(sel, curQ()), sub = P_RAP + '/' + monthDir(iso(new Date())), big = files.map(function (f) { return tooBig(f.bytes); }).filter(Boolean)[0] || '';
+      var files = await nfPdfsC(sel, curQ()), sub = P_RAP + '/' + monthDir(iso(new Date())), big = files.map(function (f) { return tooBig(f.bytes); }).filter(Boolean)[0] || '';
       if (!send) {
         var ms = []; for (var i = 0; i < files.length; i++) ms.push(await saveAny(files[i].name, files[i].bytes, 'application/pdf', false, { work: true, sub: sub }));
         nfSst(files.length + ' PDF prêt(s) : ' + ms.join(' ') + big + ' Les notes restent « saisies » tant qu\'elles ne sont pas envoyées.', 'ok'); return;
@@ -4789,6 +4808,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
   }
   $('fr-mail').addEventListener('click', function () { nfSend(true); });
   $('fr-bpdf').addEventListener('click', function () { nfSend(false); });
+  $('fr-bpv').addEventListener('click', nfPreview);
   $('fr-share').addEventListener('click', async function () {
     var p = pendingShare; if (!p) { this.hidden = true; return; }
     try { await navigator.share({ files: p.files, title: p.subj, text: p.body }); pendingShare = null; this.hidden = true; nfMarkSent(p.notes, 'partagé'); nfSst('PDF partagé(s). Adresse ' + p.to + ' copiée.', 'ok'); }
@@ -4811,7 +4831,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
   var ALLDIRS = [P_CG, P_CU, P_OI, P_RAP, P_BCK, P_GES], GLOB = 'Configuration globale.xls', AGF = 'Agenda.xls', NDFBCK = 'Note de frais en cours.ndf';
   var OLD_WK = 'gestion intervention', OLD_PHO = 'photos notes de frais', OLD_RAP = "rapports d'interventions";
   var WKDIR = P_GES, D_PHO = P_RAP, D_RAP = P_RAP, SYN = 'Synthèse interventions.xls', XLSMIME = 'application/vnd.ms-excel';
-  var APPVER = {"v": "116", "d": "20/10/2026 22:44", "h": "ed300cf"};
+  var APPVER = {"v": "117", "d": "20/10/2026 23:01", "h": "0741dd5"};
   try { $('ver-wm').textContent = 'v' + APPVER.v + ' · ' + APPVER.d; } catch (e) { }
   function wmPlace() {                           // en haut de page, sous le menu, et défile avec la page
     try { var n = document.querySelector('nav.tabs'), sp = document.querySelector('.tabs-sp'), w = document.querySelector('.ver-wm'); if (!n || !w || window.scrollY > 5) return; w.style.marginTop = '0px'; var d = Math.round(n.getBoundingClientRect().bottom + 4 - w.getBoundingClientRect().top); w.style.marginTop = d + 'px'; } catch (e) { }
@@ -6517,13 +6537,14 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
       'À chaque génération, une copie du PDF est enregistrée automatiquement dans « Gestion interventions / données / rapports / mois_annee » (ex : 10_2026, d\'après le 1er jour de l\'intervention), quel que soit l\'envoi par défaut ; le partage s\'ouvre en plus si « Partager » est coché.',
       'Statut de l\'intervention (section 8, colonne « Statut » des .xls) : Terminée (vert), Pièces à commander (rouge) ou En cours (noir), d\'après « Intervention terminée » (section 4) et les pièces à commander (section 7).',
       'Statuts (section 8) : signé (Oui si le client a signé, Non si « Sans signature ») et envoyé (date et heure, dès que le PDF est partagé). Si tu l\'envoies autrement, « ✉ Marquer comme envoyé ». Les deux statuts sont dans les colonnes « Signé » et « Envoyé » de Synthèse interventions.xls (onglet Interventions et tableau des interventions, avec le total en bas).'] },
-    { t: 'Notes de frais', go: ['fr', 'Note de frais'], k: 'note frais semaine période forfait justificatif photo envoyer mail aperçu ocr ticket date montant repas hôtel grand déplacement valider saisie saisies envoyées en cours 20 notes pdf groupé', p: [
+    { t: 'Notes de frais', go: ['fr', 'Note de frais'], k: 'note frais semaine période forfait justificatif photo envoyer mail aperçu ocr ticket date montant repas hôtel grand déplacement valider saisie saisies envoyées en cours 20 notes pdf groupé aperçu envoi groupé visualiser', p: [
       'Choisis la semaine, ajoute les lignes (frais réels ou forfaits) et les photos des justificatifs.',
       'Après la photo du ticket (et son recadrage), touche 🔤 sous la miniature pour lancer la lecture (OCR à la demande, jamais automatique) : date, montant TTC à rembourser et nature (repas, carburant, péage, hôtel, parking, transport) se remplissent. La photo est d\'abord préparée (agrandie, éclairage corrigé, contraste renforcé) puis lue deux fois si besoin (niveaux de gris et noir et blanc) : la valeur lue à l\'identique est retenue, et le total est vérifié avec HT + TVA. Une photo prise de travers est retournée automatiquement. La fiabilité de la lecture est affichée. « ↶ Annuler le remplissage » remet les valeurs d\'avant ; 🔤 sur la miniature relance la lecture.',
       'Forfaits par défaut (⋮ de « Lignes ») : repas 18 €, hôtel 100 €, grand déplacement 50 € par jour, week-end compris. « Valeurs par défaut » les remet.',
       'Saisie et envoi sont séparés. Section « Valider » : 👁 Aperçu ou 📄 PDF de cette note sans la valider ; ✔ Valider la note la range dans les notes « saisies » (copie du PDF dans « données / rapports / mois_annee ») et ouvre une nouvelle note vierge, sur la même période.',
       'Section « Envois » : la liste distingue ✎ en cours de saisie (orange), ✔ saisies (bleu) et ✉ envoyées (vert), avec un filtre en haut. Coche les notes saisies à envoyer puis ✉ Envoyer : un seul PDF contient jusqu\'à 20 notes (récapitulatif, puis le détail et les justificatifs de chaque note) ; au-delà, un PDF de plus est créé. Le maximum se règle dans le ⋮ de la section (« Notes par PDF »). Adresse de destination : même ⋮.',
       '✎ Modifier reprend une note saisie dans le formulaire ; revalide-la pour la remettre dans les envois (« Nouvelle note » abandonne les modifications). ↺ À renvoyer remet une note envoyée dans les envois. 🗑 supprime (appuie deux fois). 📄 PDF sans envoyer prépare les PDF sans changer le statut.',
+      '👁 Aperçu (Envois) montre le PDF de l\'envoi groupé des notes cochées, tel qu\'il partira (récapitulatif puis chaque note avec ses justificatifs ; si plus de notes que le maximum par PDF, chaque PDF est séparé par un titre). Zoom possible. Depuis l\'aperçu : « ✉ Envoyer » ou « 📄 PDF seul » (enregistre sans envoyer), sans refaire les PDF.',
       'Les notes validées sont gardées dans le téléphone et dans « données / backup / notes de frais validées » (un fichier .ndf par note, photos comprises) : si le téléphone est vidé, elles sont relues depuis ce dossier. Le statut figure dans les xls (feuilles « Notes de frais », « Récap notes de frais » et « Tableau des interventions »).',
       'Les photos des justificatifs sont rangées dans « données / rapports / justificatifs / mois_annee ». La note de frais en cours est gardée dans le téléphone et dans « données / backup » (Note de frais en cours.ndf) : elle n\'est plus perdue si l\'appli se ferme.'] },
     { t: 'Synthèse et sauvegardes', go: ['fr', 'Synthèse'], k: 'synthèse excel xls journal sauvegarde export import utilisateur répertoire dossier enregistrement erreur autorisation android rien ne se crée', p: [
