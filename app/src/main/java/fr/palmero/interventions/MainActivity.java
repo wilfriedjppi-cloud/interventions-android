@@ -476,7 +476,15 @@ public class MainActivity extends Activity {
                 if (!text.isEmpty()) s.putExtra(Intent.EXTRA_TEXT, text);
                 if (!to.isEmpty()) s.putExtra(Intent.EXTRA_EMAIL, to.split("\\s*[,;]\\s*"));
                 s.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                runOnUiThread(() -> startActivity(Intent.createChooser(s, "Envoyer")));
+                final boolean gm = o.optBoolean("gmail", false);
+                runOnUiThread(() -> {
+                    if (gm) {   // mail prêt directement dans Gmail : destinataire, objet, texte, pièces jointes
+                        Intent g = new Intent(s);
+                        g.setPackage("com.google.android.gm");
+                        try { startActivity(g); return; } catch (ActivityNotFoundException e) { /* Gmail absent : choix de l'appli */ }
+                    }
+                    startActivity(Intent.createChooser(s, "Envoyer"));
+                });
                 return "ok";
             } catch (Exception e) {
                 return "Partage impossible : " + e.getMessage();
