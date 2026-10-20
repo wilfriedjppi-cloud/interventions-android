@@ -21,6 +21,8 @@
         android:label="Interventions"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
+        android:largeHeap="true"
+        android:hardwareAccelerated="true"
         android:requestLegacyExternalStorage="true"
         android:usesCleartextTraffic="false"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">

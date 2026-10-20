@@ -31,15 +31,16 @@ import java.util.Map;
 
 /** Le même service que le serveur QPython (/api/…), mais dans l'appli : fichiers dans Documents/Gestion interventions. */
 class Api {
-    static final String VERSION = "appli-1.1";
+    static final String VERSION = "appli-1.2";
     static final String[] SUBS = {"", "Gestion interventions", "Gestion interventions/config/global", "Gestion interventions/config/utilisateur",
             "Gestion interventions/données/OI", "Gestion interventions/données/rapports", "Gestion interventions/données/backup",
             "Gestion interventions/données/gestion", "Gestion interventions/appli"};
     static final String SHIM = "<script>(function(){var A=window.AndroidApi;if(!A)return;"
-            + "var of=window.fetch.bind(window);"
+            + "var of=window.fetch.bind(window),CB={n:0};window.__apiCb=function(i,r){var f=CB[i];delete CB[i];if(f)f(r);};"
             + "window.fetch=function(u,o){var s=typeof u==='string'?u:(u&&u.url)||'';"
             + "if(o&&String(o.method||'').toUpperCase()==='POST'&&s.indexOf('/api/')>=0){return new Promise(function(res){var p=new URL(s,location.href).pathname;"
-            + "var r=A.post(p,typeof o.body==='string'?o.body:'{}');res(new Response(r,{status:200,headers:{'Content-Type':'application/json'}}));});}"
+            + "var bd=typeof o.body==='string'?o.body:'{}',done=function(r){res(new Response(r,{status:200,headers:{'Content-Type':'application/json'}}));};"
+            + "if(A.postAsync){var id=++CB.n;CB[id]=done;A.postAsync(id,p,bd);}else done(A.post(p,bd));});}"
             + "return of(u,o);};"
             + "function b64(buf){var u=new Uint8Array(buf),s='',i;for(i=0;i<u.length;i+=32768)s+=String.fromCharCode.apply(null,u.subarray(i,i+32768));return btoa(s);}"
             + "function sh(d){d=d||{};return Promise.all((d.files||[]).map(function(f){return f.arrayBuffer().then(function(b){return {name:f.name,type:f.type,b64:b64(b)};});}))"

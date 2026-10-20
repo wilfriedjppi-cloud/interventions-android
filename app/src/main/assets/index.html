@@ -359,6 +359,7 @@ body.rt .no-rt, body.rt #s-oi { display: none !important; }
 .xe-grid.ro td { cursor: default; color: var(--muted); }
 .over .box { background: var(--surface); border-radius: 8px; flex: 1; overflow: auto; padding: 10px; display: block; touch-action: pan-x pan-y; overscroll-behavior: contain; }
 .over .box > :not(.pv) { margin: 0 auto; }
+#tab-oi > section, #tab-bon > section, #tab-fr > section, #tab-cfg > section { content-visibility: auto; contain-intrinsic-size: auto 320px; }   /* sections hors écran : ni mise en page ni dessin → défilement plus fluide */
 .over .pv { width: max-content; min-width: 100%; margin: 0 auto; }
 .over .pv canvas { display: block; background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.3); }
 .pz { display: flex; flex: none; border: 1px solid rgba(255,255,255,.35); border-radius: 8px; overflow: hidden; }
@@ -3078,7 +3079,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
         var img = mkImg(await toJpeg(files[i], 2400, 0.9));
         if (S.pages[pi].items.filter(function (x) { return x.k === 'img'; }).length >= 6) { S.pages.splice(pi + 1, 0, { title: S.pages[pi].title, items: [] }); pi++; }
         else { var oc = pageOcc(S.pages[pi]); if (oc > 0.8) { renderPages(); if (await askNewPage(S.pages[pi], oc)) { S.pages.splice(pi + 1, 0, { title: S.pages[pi].title, items: [] }); pi++; } } }
-        addImgItem(pi, img); var ni = S.pages[pi].items[S.pages[pi].items.length - 1]; if (ni.label === BLP) blQueue.push(ni);
+        addImgItem(pi, img);
       } catch (err) { bad++; st.className = 'status err'; st.textContent = 'Photo illisible : ' + files[i].name + ' (' + ((err && err.message) || 'erreur') + ')'; }
     }
     renderPages(); blNext();
@@ -3086,7 +3087,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
   }
   $('pages').addEventListener('change', async function (e) {
     var inp = e.target;
-    if (inp.dataset && inp.dataset.a === 'label' && sel) { var li = S.pages[pOf(inp)].items[sel.i]; li.label = inp.value; renderPages(); if (inp.value === BLP) { blQueue.push(li); blNext(); } return; }
+    if (inp.dataset && inp.dataset.a === 'label' && sel) { var li = S.pages[pOf(inp)].items[sel.i]; li.label = inp.value; renderPages(); return; }
     if (!inp.classList.contains('pfile')) return;
     var pi = +inp.dataset.p, files = Array.prototype.slice.call(inp.files || []); inp.value = '';
     await addFiles(pi, files);
@@ -3181,7 +3182,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
   $('pl-cam').addEventListener('click', function () { $('plate-ov').hidden = true; $('plate-cam').click(); });
   $('pl-pick').addEventListener('click', function () { $('plate-ov').hidden = true; $('plate-file').click(); });
   var plateAuto = false;
-  function plateAutoOcr() { if (!plateAuto || !S.plate) return; plateAuto = false; if (prefs.ocrAuto !== false) openOcr(S.plate, { plate: true, auto: true }); }
+  function plateAutoOcr() { plateAuto = false; }   // OCR uniquement à la demande (🔤 Texte)
   async function onPlate() {
     var f = this.files && this.files[0]; this.value = ''; if (!f) return;
     try { S.plate = mkImg(await toJpeg(f, 2400, 0.9)); plateDone(); scheduleSizes(); plateAuto = true; openCrop({ img: S.plate }, true); }
@@ -3273,13 +3274,15 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
   function scheduleSizes() {
     clearTimeout(sizeTimer); var seq = ++sizeSeq;
     sizeTimer = setTimeout(async function () {
-      var els = document.querySelectorAll('#quality em'); if (!els.length) return;
+      var els = Array.prototype.slice.call(document.querySelectorAll('#quality em')); if (!els.length) return;
+      var cq = curQ(), full = !$('q-ov').hidden; els.sort(function (a, b) { return (b.dataset.q === cq) - (a.dataset.q === cq); });   // la qualité choisie d'abord
       for (var i = 0; i < els.length; i++) {
-        var q = els[i].dataset.q;
+        var q = els[i].dataset.q; if (!full && q !== cq) continue;   // pendant la saisie : seulement la qualité choisie (plus rapide)
+        await new Promise(function (r) { (window.requestIdleCallback || setTimeout)(function () { r(); }, { timeout: 800 }); }); if (seq !== sizeSeq) return;
         try { var by = await build(q); if (seq !== sizeSeq) return; els[i].textContent = fmtSize(by.length); if (q === curQ()) { $('btn-gen').textContent = 'Générer le PDF (' + fmtSize(by.length) + ')'; qLab(); } sizeBy[q] = by.length; sizeAlarm(); }
         catch (e) { els[i].textContent = '?'; }
       }
-    }, 700);
+    }, $('q-ov').hidden ? 1500 : 200);
   }
   var QLAB = { light: 'Léger', hq: 'Haute qualité', max: 'Maximale' }, sizeBy = {};
   function pdfMax() { var v = numFr(prefs.pdfMax); return v > 0 ? v * 1048576 : 0; }
@@ -3307,13 +3310,17 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
     function scan() {
       var cur = null;
       document.querySelectorAll(SEL).forEach(function (e) {
-        var t = (e.textContent || '').trim(), on = /(…|\.\.\.)$/.test(t) && !/\b(err)\b/.test(e.className) && e.id !== 'wk-st';
+        var t = (e.textContent || '').trim(), on = /(…|\.\.\.)$/.test(t) && !/\b(err)\b/.test(e.className) && e.id !== 'wk-st' && e.id !== 'sto-info';
         e.classList.toggle('busy-on', on); if (on && vis(e) && !cur) cur = t;
       });
       if (cur) { if (bt.textContent !== cur) bt.textContent = cur; if (box.hidden) { box.hidden = false; since = Date.now(); } clearTimeout(tm); tm = setTimeout(function () { box.hidden = true; }, 120000); }
       else if (!box.hidden) { var d = Math.max(0, 350 - (Date.now() - since)); clearTimeout(tm); tm = setTimeout(function () { box.hidden = true; }, d); }   // reste affiché au moins 0,35 s : pas de clignotement
     }
-    var q = 0; function later(ms) { if (ms && ms.every(function (m) { return box.contains(m.target); })) return; if (!q) q = Promise.resolve().then(function () { q = 0; scan(); }); }
+    var q = 0; function later(ms) {   // regroupe les changements : un examen au plus toutes les 120 ms (immédiat si un message « … » apparaît)
+      if (ms && ms.every(function (m) { return box.contains(m.target); })) return; if (q) return;
+      var now = ms && ms.some(function (m) { var t = m.target.nodeType === 3 ? m.target.parentNode : m.target; return t && /…$/.test((t.textContent || '').slice(-2)); });
+      q = 1; if (now) Promise.resolve().then(function () { q = 0; scan(); }); else setTimeout(function () { q = 0; scan(); }, 120);
+    }
     try { new MutationObserver(later).observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['hidden', 'class'] }); } catch (e) { }
   })();
   function msg(t, cls) { var m = $('msg'); m.textContent = t || ''; m.style.color = cls === 'err' ? 'var(--danger)' : cls === 'ok' ? 'var(--ok)' : 'var(--muted)'; }
@@ -4500,7 +4507,6 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
             var im = mkImg(await toJpeg(files[i], 2400, 0.9)); l.photos.push(im); frRender();
             await new Promise(function (res) { openCrop({ img: im }, false, res); });      // recadrage à chaque ajout
             frRender();
-            if (prefs.ocrAuto !== false && i === 0) { await openOcr(im, { line: l }); frRender(); }   // lecture auto : date, montant, nature
           } catch (err) { $('fr-st').className = 'status err'; $('fr-st').textContent = 'Photo illisible : ' + files[i].name; }
         }
         frRender();
@@ -4805,7 +4811,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
   var ALLDIRS = [P_CG, P_CU, P_OI, P_RAP, P_BCK, P_GES], GLOB = 'Configuration globale.xls', AGF = 'Agenda.xls', NDFBCK = 'Note de frais en cours.ndf';
   var OLD_WK = 'gestion intervention', OLD_PHO = 'photos notes de frais', OLD_RAP = "rapports d'interventions";
   var WKDIR = P_GES, D_PHO = P_RAP, D_RAP = P_RAP, SYN = 'Synthèse interventions.xls', XLSMIME = 'application/vnd.ms-excel';
-  var APPVER = {"v": "115", "d": "20/10/2026 22:24", "h": "a54b428"};
+  var APPVER = {"v": "116", "d": "20/10/2026 22:44", "h": "ed300cf"};
   try { $('ver-wm').textContent = 'v' + APPVER.v + ' · ' + APPVER.d; } catch (e) { }
   function wmPlace() {                           // en haut de page, sous le menu, et défile avec la page
     try { var n = document.querySelector('nav.tabs'), sp = document.querySelector('.tabs-sp'), w = document.querySelector('.ver-wm'); if (!n || !w || window.scrollY > 5) return; w.style.marginTop = '0px'; var d = Math.round(n.getBoundingClientRect().bottom + 4 - w.getBoundingClientRect().top); w.style.marginTop = d + 'px'; } catch (e) { }
@@ -5074,7 +5080,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
   function globSheets() { return CATS.filter(function (c) { return GLOB_IDS.indexOf(c.id) >= 0; }).map(function (c) { return { name: c.id, rows: c.exp() }; }); }
   function agSheets() { return CATS.filter(function (c) { return c.id === 'Agenda' || c.id === 'Projets' || c.id === 'Tâches' || c.id === 'Dossiers'; }).map(function (c) { return { name: c.id, rows: c.exp() }; }); }
   function sigBytes(d) { var m = /^data:[^;]+;base64,(.*)$/.exec(d || ''); if (!m) return null; var b = atob(m[1]), u = new Uint8Array(b.length); for (var i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
-  function keysJson() { return JSON.stringify({ googleMapsKey: prefs.gkey || '', mailNotesDeFrais: prefs.ndfMail || '', pdfMaxMo: prefs.pdfMax || '', sauvegardeMin: saveMin(), cheminNote: prefs.workPath || '', ocrAuto: prefs.ocrAuto !== false }, null, 1); }
+  function keysJson() { return JSON.stringify({ googleMapsKey: prefs.gkey || '', mailNotesDeFrais: prefs.ndfMail || '', pdfMaxMo: prefs.pdfMax || '', sauvegardeMin: saveMin(), cheminNote: prefs.workPath || '', ocrAuto: false }, null, 1); }
   var assetsLast = {};
   async function saveAssets() {                   // signature, logo, clés : config/utilisateur (seulement s'ils ont changé)
     var items = [['signature.png', prefs.sig || '', 'image/png'], ['logo.jpg', (lsGet('bi.logo') || {}).d || '', 'image/jpeg'], ['cles.json', keysJson(), 'application/json']];
@@ -5108,13 +5114,18 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
   async function syncFiles() {                  // synthèse, agenda, fichiers utilisateur et global, signature/logo/clés, note de frais en cours
     try {
       if (!(await storeReady())) return false;
-      await saveXls(SYN, synthSheets(), P_GES); await saveXls(AGF, agSheets(), P_GES);
-      await saveXls(userFile(), userSheets(), P_CU); await saveXls(GLOB, globSheets(), P_CG);
+      await xlsKeep(SYN, synthSheets(), P_GES); await xlsKeep(AGF, agSheets(), P_GES);
+      await xlsKeep(userFile(), userSheets(), P_CU); await xlsKeep(GLOB, globSheets(), P_CG);
       try { await saveAssets(); } catch (e) { }
       try { await ndfBckSave(); } catch (e) { }
       try { localStorage.setItem('bi.mt', String(Date.now() + 1500)); } catch (e) { }
       return true;
     } catch (e) { return false; }
+  }
+  var xlsLast = {};
+  async function xlsKeep(name, sheets, sub) {   // copie de sauvegarde : n'écrit le fichier que si son contenu a changé depuis la dernière copie
+    var t = xlsBuild(sheets), k = sub + '/' + name; if (xlsLast[k] === t) return;
+    await saveAny(name, new TextEncoder().encode(t), 'application/vnd.ms-excel', false, { work: true, sub: sub }); xlsLast[k] = t;
   }
   function userDirty() { bkDirty = true; }
   async function fullBackup(why) {              // copie complète dans les répertoires usuels : toutes les N min et en quittant
@@ -6435,7 +6446,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
       'Au premier lancement : autorise « Gestion de tous les fichiers », puis l\'appareil photo, la position et le micro.',
       'Ouvrir un OI : dans Gmail, appuie sur la pièce jointe PDF → Ouvrir avec (ou Partager) → Interventions : l\'OI est lu tout de suite et ajouté à la liste des dossiers. Sinon « Choisir l\'OI (PDF) ».',
       'Envoi des bons et notes de frais : le partage Android s\'ouvre avec les PDF joints (Gmail, Outlook…). Les bibliothèques (lecteur PDF, OCR, tableur) sont gardées dans l\'appli après leur premier téléchargement : elles marchent ensuite hors connexion.',
-      'Mettre à jour la page sans réinstaller : copie le nouveau interventions.html dans Documents/Gestion interventions/appli/ ; l\'appli le prend en priorité. La dictée vocale du navigateur n\'existe pas dans l\'appli : utilise le micro du clavier Google.'] },
+      'Les enregistrements de fichiers se font en tâche de fond : l\'écran ne se fige plus pendant les sauvegardes. Mettre à jour la page sans réinstaller : copie le nouveau interventions.html dans Documents/Gestion interventions/appli/ ; l\'appli le prend en priorité. La dictée vocale du navigateur n\'existe pas dans l\'appli : utilise le micro du clavier Google.'] },
     { t: 'Passer d\'un onglet à l\'autre en balayant', go: ['oi'], k: 'swipe balayer glisser doigt onglet gauche droite navigation geste', p: [
       'Balaye vers la gauche pour passer à l\'onglet de droite (OI & client → Intervention → Frais → Réglages), vers la droite pour revenir à celui de gauche.',
       'Le geste est ignoré quand il commence dans le champ en cours de saisie, une zone de signature, un tableau ou une liste qui défile de côté, une fenêtre ouverte (agenda, aperçu…), ou au bord de l\'écran (réservé au geste « retour » d\'Android).'] },
@@ -6473,7 +6484,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
     { t: 'Machine', go: ['bon', '1 · Machine'], k: 'machine type marque modèle série plaque photo cn ocr lecture automatique', p: [
       'Type, marque, modèle, n° de série : les valeurs déjà saisies sont proposées.',
       '« Photo de la plaque » : prends ou choisis la photo, recadre-la, annote-la si besoin (✏️).',
-      'Après le recadrage, l\'OCR lit la plaque et remplit les champs vides : marque, modèle, n° de série, commande numérique, année. Vérifie, ou « ↶ Annuler le remplissage ».'] },
+      'Après le recadrage, touche « 🔤 Texte » pour lancer l\'OCR (il ne se lance plus tout seul) : il lit la plaque et remplit les champs vides : marque, modèle, n° de série, commande numérique, année. Vérifie, ou « ↶ Annuler le remplissage ».'] },
     { t: 'Heures, repas et déplacements', go: ['bon', '2 · Heures'], k: 'heures horaires jours repas aller-retour nuitées techniciens horloge clavier', p: [
       'Un bloc par jour (5 maximum) : arrivée / départ matin et après-midi, repas, A/R, nuitées. Les km du jour (A/R × distance de l\'itinéraire) s\'affichent à côté des heures, et le total en bas ; ils s\'ajoutent au journal et au tableau des interventions au fil de la saisie.',
       'Saisie à l\'horloge ou au clavier numérique (au choix dans le ⋮ de la section).'] },
@@ -6486,10 +6497,10 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
     { t: 'Photos et pages annexes', go: ['bon', '6 · Photos'], k: 'photo annexe page recadrer annoter dessin flèche texte objet légende ocr lecture bon de livraison bl page pleine google lens recherche image plaque', p: [
       'Choisis l\'objet (avant/après réparation, pièce à commander, bon de livraison…) puis ajoute les photos.',
       'Sélectionne une photo : Recadrer, ✏️ Annoter (main levée, traits, flèches, cadres, texte), 🔤 Texte (OCR), 🔍 Google Lens (recherche par l\'image dans un nouvel onglet), commentaire.',
-      'Photo de la plaque (1 · Machine) : après le recadrage, le texte est lu tout seul et remplit les champs vides : marque, modèle, n° de série, commande numérique (TNC, Sinumerik, Fanuc…), année. « ↶ Annuler le remplissage » remet les valeurs d\'avant ; 🔤 Texte relance la lecture, 🔍 Google Lens cherche la machine.',
+      'Photo de la plaque (1 · Machine) : touche « 🔤 Texte » après le recadrage pour lire le texte (OCR à la demande, jamais automatique) ; il remplit les champs vides : marque, modèle, n° de série, commande numérique (TNC, Sinumerik, Fanuc…), année. « ↶ Annuler le remplissage » remet les valeurs d\'avant ; 🔍 Google Lens cherche la machine.',
       'Recadre avant d\'annoter : un recadrage efface les annotations.',
       'Page remplie à plus de 80 % : la photo suivante peut aller sur une nouvelle page.',
-      'Photo « Bon de livraison » : le n° BL-année-numéro et les pièces sont lus et ajoutés à « 5 · Pièces utilisées » (à vérifier).',
+      'Photo « Bon de livraison » : sélectionne-la puis 🔤 Texte ; le n° BL-année-numéro et les pièces sont lus et ajoutés à « 5 · Pièces utilisées » (à vérifier).',
       'OCR (🔤) aussi sur la plaque (remplit modèle, n° de série, année) et sur les justificatifs de frais (montant).'] },
     { t: 'Pièces à commander', go: ['bon', '7 · Pièces'], k: 'pièce commander commande référence quantité lien site numéro google lens recherche image', p: [
       'Chaque photo « Pièce à commander » reçoit un numéro (1, 2, 3…) et une ligne ici.',
@@ -6499,6 +6510,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
     { t: 'Générer et envoyer le bon', go: ['bon', '8 · Fichier'], k: 'générer pdf envoyer mail destinataire compression aperçu attente engrenages zoom pincer agrandir signature client rapport taille maximale jauge', p: [
       'Choisis les destinataires et la 🗜 compression (le dernier choix est gardé) ; règle si besoin une taille maximale du PDF.',
       '« Aperçu » pour vérifier : la jauge en haut indique la part de la taille maximale (orange dès 75 %, rouge au-delà) ; touche-la pour changer la compression.',
+      'Pendant la saisie, seule la taille du PDF à la compression choisie est recalculée (les autres le sont à l\'ouverture du choix 🗜) : l\'appli reste fluide même avec beaucoup de photos.',
       'Pendant un traitement long (génération du PDF, aperçu, validation d\'une note, lecture d\'un OI, OCR, calcul de trajet…), deux engrenages tournent en haut de l\'écran avec le message en cours, et une petite roue tourne devant le message d\'état : attends qu\'ils disparaissent.',
       'Zoom dans l\'aperçu (bon, note de frais, planning, PDF ouvert) : écarte deux doigts pour zoomer, double-tape pour passer de 100 % à 250 % (au point touché) et revenir, ou utilise − / + en haut ; touche le pourcentage pour réajuster à la largeur. Zoomé, fais glisser un doigt pour te déplacer dans la page (jusqu\'à 600 %).',
       '« Générer le PDF » : signature du client, alerte des champs manquants et d\'un fichier trop lourd.',
@@ -6507,7 +6519,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
       'Statuts (section 8) : signé (Oui si le client a signé, Non si « Sans signature ») et envoyé (date et heure, dès que le PDF est partagé). Si tu l\'envoies autrement, « ✉ Marquer comme envoyé ». Les deux statuts sont dans les colonnes « Signé » et « Envoyé » de Synthèse interventions.xls (onglet Interventions et tableau des interventions, avec le total en bas).'] },
     { t: 'Notes de frais', go: ['fr', 'Note de frais'], k: 'note frais semaine période forfait justificatif photo envoyer mail aperçu ocr ticket date montant repas hôtel grand déplacement valider saisie saisies envoyées en cours 20 notes pdf groupé', p: [
       'Choisis la semaine, ajoute les lignes (frais réels ou forfaits) et les photos des justificatifs.',
-      'Après la photo du ticket (et son recadrage), le texte est lu tout seul : date, montant TTC à rembourser et nature (repas, carburant, péage, hôtel, parking, transport) se remplissent. La photo est d\'abord préparée (agrandie, éclairage corrigé, contraste renforcé) puis lue deux fois si besoin (niveaux de gris et noir et blanc) : la valeur lue à l\'identique est retenue, et le total est vérifié avec HT + TVA. Une photo prise de travers est retournée automatiquement. La fiabilité de la lecture est affichée. « ↶ Annuler le remplissage » remet les valeurs d\'avant ; 🔤 sur la miniature relance la lecture.',
+      'Après la photo du ticket (et son recadrage), touche 🔤 sous la miniature pour lancer la lecture (OCR à la demande, jamais automatique) : date, montant TTC à rembourser et nature (repas, carburant, péage, hôtel, parking, transport) se remplissent. La photo est d\'abord préparée (agrandie, éclairage corrigé, contraste renforcé) puis lue deux fois si besoin (niveaux de gris et noir et blanc) : la valeur lue à l\'identique est retenue, et le total est vérifié avec HT + TVA. Une photo prise de travers est retournée automatiquement. La fiabilité de la lecture est affichée. « ↶ Annuler le remplissage » remet les valeurs d\'avant ; 🔤 sur la miniature relance la lecture.',
       'Forfaits par défaut (⋮ de « Lignes ») : repas 18 €, hôtel 100 €, grand déplacement 50 € par jour, week-end compris. « Valeurs par défaut » les remet.',
       'Saisie et envoi sont séparés. Section « Valider » : 👁 Aperçu ou 📄 PDF de cette note sans la valider ; ✔ Valider la note la range dans les notes « saisies » (copie du PDF dans « données / rapports / mois_annee ») et ouvre une nouvelle note vierge, sur la même période.',
       'Section « Envois » : la liste distingue ✎ en cours de saisie (orange), ✔ saisies (bleu) et ✉ envoyées (vert), avec un filtre en haut. Coche les notes saisies à envoyer puis ✉ Envoyer : un seul PDF contient jusqu\'à 20 notes (récapitulatif, puis le détail et les justificatifs de chaque note) ; au-delà, un PDF de plus est créé. Le maximum se règle dans le ⋮ de la section (« Notes par PDF »). Adresse de destination : même ⋮.',
@@ -6885,7 +6897,7 @@ if (typeof module !== 'undefined') module.exports = { parseOI: parseOI };
     if (!s.moved) jumpSec(Math.min(railSecs.length - 1, Math.floor(railPos(e) * railSecs.length)));
   }
   rail.addEventListener('pointerup', railEnd); rail.addEventListener('pointercancel', function () { scrubbing = null; });
-  window.addEventListener('scroll', railActive, { passive: true });
+  var railRaf = 0; window.addEventListener('scroll', function () { if (!railRaf) railRaf = requestAnimationFrame(function () { railRaf = 0; railActive(); }); }, { passive: true });
   window.addEventListener('resize', function () { buildRail(); });
 
   /* ---------- départ ---------- */

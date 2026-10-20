@@ -318,11 +318,24 @@ public class MainActivity extends Activity {
         });
     }
 
+    static final java.util.concurrent.ExecutorService IO = java.util.concurrent.Executors.newSingleThreadExecutor();   // écritures dans l'ordre, hors de l'écran
+
     /* ---------- pont JavaScript ---------- */
     class Bridge {
         @JavascriptInterface
         public String post(String path, String body) {
             return api.post(path, body);
+        }
+
+        /** Même chose sans bloquer l'écran : le fichier est écrit en tâche de fond, puis la page est rappelée. */
+        @JavascriptInterface
+        public void postAsync(final int id, final String path, final String body) {
+            IO.execute(() -> {
+                String r;
+                try { r = api.post(path, body); } catch (Throwable e) { r = "{\"ok\":false,\"error\":" + JSONObject.quote(String.valueOf(e)) + "}"; }
+                final String js = "window.__apiCb&&window.__apiCb(" + id + "," + JSONObject.quote(r) + ")";
+                web.post(() -> web.evaluateJavascript(js, null));
+            });
         }
 
         @JavascriptInterface
