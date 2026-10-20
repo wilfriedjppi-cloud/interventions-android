@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="reglages" android:enabled="true" android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/sc_court" android:shortcutLongLabel="@string/sc_long">
+        <intent android:action="fr.palmero.interventions.REGLAGES" android:targetPackage="fr.palmero.interventions" android:targetClass="fr.palmero.interventions.MainActivity" />
+    </shortcut>
+</shortcuts>

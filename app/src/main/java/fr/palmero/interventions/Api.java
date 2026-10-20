@@ -31,7 +31,7 @@ import java.util.Map;
 
 /** Le même service que le serveur QPython (/api/…), mais dans l'appli : fichiers dans Documents/Gestion interventions. */
 class Api {
-    static final String VERSION = "appli-1.2";
+    static final String VERSION = "appli-2.0";
     static final String[] SUBS = {"", "Gestion interventions", "Gestion interventions/config/global", "Gestion interventions/config/utilisateur",
             "Gestion interventions/données/OI", "Gestion interventions/données/rapports", "Gestion interventions/données/backup",
             "Gestion interventions/données/gestion", "Gestion interventions/appli"};
@@ -234,19 +234,124 @@ class Api {
         }
     }
 
-    /** La page : interventions.html déposé dans Documents/Gestion interventions/appli (mise à jour sans réinstaller), sinon celle de l'appli. */
-    String htmlSource() {
-        File f = new File(dirOf("Gestion interventions"), "appli/interventions.html");
-        return f.isFile() ? f.getAbsolutePath() : "intégrée à l'application";
+    /* ---------- la page : l'APK n'en contient pas ; elle est cherchée selon le réglage ----------
+       auto (par défaut) : la page HTML la plus récente de Documents/Gestion interventions/appli (n° de version, puis date)
+       file : un fichier choisi n'importe où (Documents, Téléchargements, Drive…)
+       url  : une adresse web (copie gardée pour le hors connexion) */
+    String source = "";
+
+    File appDir() { return new File(dirOf("Gestion interventions"), "appli"); }
+
+    static int pageVersion(byte[] b) {
+        String t = new String(b, StandardCharsets.UTF_8);
+        int i = t.indexOf("APPVER = {\"v\": \"");
+        if (i < 0) return -1;
+        i += 16;
+        int j = i;
+        while (j < t.length() && Character.isDigit(t.charAt(j))) j++;
+        try { return Integer.parseInt(t.substring(i, j)); } catch (Exception e) { return -1; }
     }
 
+    static boolean isHtml(String n) { n = n.toLowerCase(); return n.endsWith(".html") || n.endsWith(".htm"); }
+
+    /** La page la plus récente du dossier appli : plus grand n° de version, puis la plus récemment modifiée. */
+    File newestPage() {
+        File[] l = appDir().listFiles();
+        if (l == null) return null;
+        File best = null;
+        int bv = -2;
+        for (File f : l) {
+            if (!f.isFile() || !isHtml(f.getName())) continue;
+            int v;
+            try { v = pageVersion(readAll(new FileInputStream(f))); } catch (Exception e) { continue; }
+            if (best == null || v > bv || (v == bv && f.lastModified() > best.lastModified())) { best = f; bv = v; }
+        }
+        return best;
+    }
+
+    String mode() { return sp.getString("src", "auto"); }
+
+    byte[] fetchUrl(String url) {
+        HttpURLConnection c = null;
+        try {
+            c = (HttpURLConnection) new URL(url).openConnection();
+            c.setConnectTimeout(8000);
+            c.setReadTimeout(15000);
+            c.setUseCaches(false);
+            c.setRequestProperty("Cache-Control", "no-cache");
+            c.setInstanceFollowRedirects(true);
+            if (c.getResponseCode() != 200) return null;
+            byte[] b = readAll(c.getInputStream());
+            return b.length > 100 ? b : null;
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (c != null) c.disconnect();
+        }
+    }
+
+    byte[] pageBytes() {
+        String m = mode();
+        try {
+            if (m.equals("url")) {
+                String url = sp.getString("url", "");
+                File cache = new File(ctx.getFilesDir(), "page-web.html");
+                byte[] b = url.isEmpty() ? null : fetchUrl(url);
+                if (b != null) {
+                    try (OutputStream o = new FileOutputStream(cache)) { o.write(b); }
+                    source = "adresse web : " + url;
+                    return b;
+                }
+                if (cache.isFile()) { source = "adresse web (copie hors connexion) : " + url; return readAll(new FileInputStream(cache)); }
+            } else if (m.equals("file")) {
+                String u = sp.getString("uri", "");
+                if (!u.isEmpty()) {
+                    try (InputStream in = ctx.getContentResolver().openInputStream(Uri.parse(u))) {
+                        byte[] b = readAll(in);
+                        source = "fichier choisi : " + sp.getString("uriName", u);
+                        return b;
+                    } catch (Exception e) { /* fichier déplacé ou supprimé : recherche automatique */ }
+                }
+            }
+            File f = newestPage();
+            if (f != null) {
+                byte[] b = readAll(new FileInputStream(f));
+                int v = pageVersion(b);
+                source = (m.equals("auto") ? "" : "secours, ") + "automatique : " + f.getAbsolutePath() + (v > 0 ? " (v" + v + ")" : "");
+                return b;
+            }
+        } catch (Exception ignored) { }
+        source = "aucune page trouvée";
+        try { return readAll(ctx.getAssets().open("accueil.html")); } catch (Exception e) { return "<p>Aucune page.</p>".getBytes(StandardCharsets.UTF_8); }
+    }
+
+    String htmlSource() { return source.isEmpty() ? mode() : source; }
+
     WebResourceResponse page() throws Exception {
-        File f = new File(dirOf("Gestion interventions"), "appli/interventions.html");
-        byte[] b = f.isFile() ? readAll(new FileInputStream(f)) : readAll(ctx.getAssets().open("index.html"));
-        String t = new String(b, StandardCharsets.UTF_8);
+        String t = new String(pageBytes(), StandardCharsets.UTF_8);
         int i = t.indexOf("<head>");
         t = i >= 0 ? t.substring(0, i + 6) + SHIM + t.substring(i + 6) : SHIM + t;
         return resp(200, "text/html", t.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** Copie une page HTML (choisie ou reçue par « Ouvrir avec ») dans le dossier appli. */
+    String importPage(InputStream in, String name) throws Exception {
+        byte[] b = readAll(in);
+        File d = appDir();
+        if (!d.isDirectory() && !d.mkdirs()) throw new Exception("impossible de créer " + d.getAbsolutePath());
+        if (!isHtml(name)) name = name + ".html";
+        int v = pageVersion(b);
+        if (v > 0) name = "interventions-v" + v + ".html";
+        File f = new File(d, safeName(name));
+        try (OutputStream o = new FileOutputStream(f)) { o.write(b); }
+        if (v > 0) {   // ménage : les copies plus anciennes de la page sont supprimées (la plus récente est gardée)
+            File[] l = d.listFiles();
+            if (l != null) for (File x : l) {
+                if (x.equals(f) || !x.isFile() || !isHtml(x.getName())) continue;
+                try { int xv = pageVersion(readAll(new FileInputStream(x))); if (xv > 0 && xv < v) x.delete(); } catch (Exception ignored) { }
+            }
+        }
+        return f.getName();
     }
 
     /* ---------- /api/… en écriture (via le pont JavaScript) ---------- */

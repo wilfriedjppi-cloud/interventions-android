@@ -1,0 +1,25 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Interventions</title>
+<style>
+:root{--bg:#eef0f3;--s:#fff;--fg:#1b2330;--mu:#566274;--ac:#f27f0c;--li:#d3d9e1}
+@media (prefers-color-scheme:dark){:root{--bg:#12161d;--s:#1a2029;--fg:#e8ebf0;--mu:#9aa5b5;--ac:#ff9a3d;--li:#2d3644}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,Roboto,sans-serif;padding:24px 16px}
+main{max-width:520px;margin:0 auto;display:grid;gap:14px}
+h1{font-size:21px;margin:0}.card{background:var(--s);border:1px solid var(--li);border-radius:10px;padding:14px 16px}
+p{margin:0 0 8px}code{font-size:13px;word-break:break-all;color:var(--mu)}
+button{width:100%;min-height:48px;border-radius:10px;border:1px solid var(--li);background:var(--s);color:var(--fg);font:inherit;font-weight:600;margin-top:8px}
+button.p{background:var(--ac);border-color:var(--ac);color:#1b2330}.mu{color:var(--mu);font-size:13px}
+</style></head><body><main>
+<h1>Interventions — aucune page trouvée</h1>
+<div class="card">
+<p>L'application ne contient pas la page : elle utilise la page HTML <b>la plus récente</b> du dossier :</p>
+<p><code id="dir">Documents/Gestion interventions/appli</code></p>
+<p class="mu">Pour l'installer : télécharge <b>interventions.html</b>, puis « Importer une page », ou ouvre le fichier avec « Interventions » (Fichiers ou Gmail → Ouvrir avec), ou copie-le dans ce dossier.</p>
+<button class="p" onclick="AndroidApi.importPage()">📥 Importer une page HTML…</button>
+<button onclick="AndroidApi.settings()">⚙ Réglages de la page (fichier, adresse web)</button>
+<button onclick="location.reload()">↻ Rechercher à nouveau</button>
+</div>
+<p class="mu" id="src"></p>
+</main>
+<script>try{var i=JSON.parse(AndroidApi.pageInfo());document.getElementById('dir').textContent=i.dir;document.getElementById('src').textContent='Réglage : '+(i.mode==='auto'?'automatique':i.mode==='file'?'fichier choisi':'adresse web '+i.url)+'.';}catch(e){}</script>
+</body></html>

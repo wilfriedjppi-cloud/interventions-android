@@ -47,7 +47,8 @@ import java.util.Set;
 public class MainActivity extends Activity {
     static final String HOST = "appassets.androidplatform.net";
     static final String ORIGIN = "https://" + HOST;
-    static final int REQ_FILE = 11, REQ_PERM = 12;
+    static final int REQ_FILE = 11, REQ_PERM = 12, REQ_PAGE = 13, REQ_IMPORT = 14;
+    static final String ACT_SETTINGS = "fr.palmero.interventions.REGLAGES";
 
     WebView web;
     Api api;
@@ -223,6 +224,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
+        if (req == REQ_PAGE || req == REQ_IMPORT) { pageChosen(req, res == RESULT_OK && data != null ? data.getData() : null); return; }
         if (req != REQ_FILE || fileCb == null) return;
         Uri[] out = null;
         if (res == RESULT_OK) {
@@ -249,12 +251,15 @@ public class MainActivity extends Activity {
 
     void handleIntent(Intent i) {
         if (i == null) return;
+        if (ACT_SETTINGS.equals(i.getAction())) { web.post(this::showSettings); return; }
         Uri u = null;
         if (Intent.ACTION_VIEW.equals(i.getAction())) u = i.getData();
         else if (Intent.ACTION_SEND.equals(i.getAction())) u = i.getParcelableExtra(Intent.EXTRA_STREAM);
         if (u == null) return;
+        String typ = String.valueOf(i.getType()), dn = displayName(u);
+        if (typ.contains("html") || Api.isHtml(dn)) { pageChosen(REQ_IMPORT, u); return; }   // page HTML reçue : installée dans le dossier appli
         try {
-            String name = displayName(u);
+            String name = dn;
             if (!name.toLowerCase().endsWith(".pdf")) name = name + ".pdf";
             File dir = new File(getCacheDir(), "inbox");
             dir.mkdirs();
@@ -320,6 +325,74 @@ public class MainActivity extends Activity {
 
     static final java.util.concurrent.ExecutorService IO = java.util.concurrent.Executors.newSingleThreadExecutor();   // écritures dans l'ordre, hors de l'écran
 
+    /* ---------- réglage de la page : automatique, fichier choisi ou adresse web ---------- */
+    void showSettings() {
+        final String[] items = {"Automatique : la page la plus récente du dossier appli", "Un fichier HTML choisi…", "Une adresse web (URL)…"};
+        String m = api.mode();
+        int cur = m.equals("file") ? 1 : m.equals("url") ? 2 : 0;
+        final int[] pick = {cur};
+        new AlertDialog.Builder(this)
+                .setTitle("Page de l'application\nActuelle : " + api.htmlSource())
+                .setSingleChoiceItems(items, cur, (d, w) -> pick[0] = w)
+                .setPositiveButton("Appliquer", (d, w) -> {
+                    if (pick[0] == 0) { api.sp.edit().putString("src", "auto").apply(); reloadPage("Page : automatique (dossier " + api.appDir().getAbsolutePath() + ")"); }
+                    else if (pick[0] == 1) openPicker(REQ_PAGE);
+                    else askUrl();
+                })
+                .setNeutralButton("Importer une page…", (d, w) -> openPicker(REQ_IMPORT))
+                .setNegativeButton("Fermer", null)
+                .show();
+    }
+
+    void openPicker(int req) {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*");
+        i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"text/html", "application/xhtml+xml", "text/plain", "application/octet-stream"});
+        try { startActivityForResult(i, req); } catch (Exception e) { Toast.makeText(this, "Aucun sélecteur de fichiers", Toast.LENGTH_LONG).show(); }
+    }
+
+    void askUrl() {
+        final android.widget.EditText e = new android.widget.EditText(this);
+        e.setHint("ex : https://mon-site.fr/interventions.html");
+        e.setText(api.sp.getString("url", ""));
+        e.setSingleLine(true);
+        e.setInputType(android.text.InputType.TYPE_TEXT_VARIATION_URI | android.text.InputType.TYPE_CLASS_TEXT);
+        new AlertDialog.Builder(this).setTitle("Adresse de la page").setView(e)
+                .setPositiveButton("OK", (d, w) -> {
+                    String u = e.getText().toString().trim();
+                    if (!u.startsWith("https://") && !u.startsWith("http://")) { Toast.makeText(this, "Adresse invalide (https://…)", Toast.LENGTH_LONG).show(); return; }
+                    api.sp.edit().putString("src", "url").putString("url", u).apply();
+                    reloadPage("Page : " + u);
+                })
+                .setNegativeButton("Annuler", null).show();
+    }
+
+    void pageChosen(int req, Uri u) {
+        if (u == null) return;
+        String name = displayName(u);
+        try {
+            if (req == REQ_PAGE) {
+                try { getContentResolver().takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) { }
+                api.sp.edit().putString("src", "file").putString("uri", u.toString()).putString("uriName", name).apply();
+                reloadPage("Page : " + name);
+            } else {
+                String n;
+                try (InputStream in = getContentResolver().openInputStream(u)) { n = api.importPage(in, name); }
+                api.sp.edit().putString("src", "auto").apply();
+                reloadPage("Page installée : " + n);
+            }
+        } catch (Exception e) {
+            Toast.makeText(this, "Page illisible : " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    void reloadPage(String msg) {
+        if (msg != null) Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
+        pageReady = false;
+        web.loadUrl(ORIGIN + "/index.html?t=" + System.currentTimeMillis());
+    }
+
     /* ---------- pont JavaScript ---------- */
     class Bridge {
         @JavascriptInterface
@@ -336,6 +409,24 @@ public class MainActivity extends Activity {
                 final String js = "window.__apiCb&&window.__apiCb(" + id + "," + JSONObject.quote(r) + ")";
                 web.post(() -> web.evaluateJavascript(js, null));
             });
+        }
+
+        @JavascriptInterface
+        public void settings() { runOnUiThread(MainActivity.this::showSettings); }
+
+        @JavascriptInterface
+        public void importPage() { runOnUiThread(() -> openPicker(REQ_IMPORT)); }
+
+        @JavascriptInterface
+        public String pageInfo() {
+            try {
+                JSONObject o = new JSONObject();
+                o.put("mode", api.mode());
+                o.put("source", api.htmlSource());
+                o.put("dir", api.appDir().getAbsolutePath());
+                o.put("url", api.sp.getString("url", ""));
+                return o.toString();
+            } catch (Exception e) { return "{}"; }
         }
 
         @JavascriptInterface
