@@ -427,6 +427,19 @@ class Api {
         if (!ok) return null;
         try {
             String url = u.toString();
+            String LF = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/";   // carte : Leaflet intégré à l'APK (les fonds de carte restent en ligne)
+            if (url.startsWith(LF)) {
+                String rest = url.substring(LF.length()).split("[?#]")[0], as = rest.equals("leaflet.min.js") ? "lib/leaflet/leaflet.js" : rest.equals("leaflet.min.css") ? "lib/leaflet/leaflet.css" : rest.startsWith("images/") ? "lib/leaflet/" + rest : null;
+                if (as != null && !as.contains("..")) {
+                    try {
+                        InputStream in = ctx.getAssets().open(as);
+                        Map<String, String> hh = new HashMap<>();
+                        hh.put("Access-Control-Allow-Origin", "*");
+                        String mm = as.endsWith(".js") ? "application/javascript" : as.endsWith(".css") ? "text/css" : "image/png";
+                        return new WebResourceResponse(mm, mm.startsWith("image") ? null : "utf-8", 200, "OK", hh, in);
+                    } catch (Exception ignored) { }
+                }
+            }
             MessageDigest md = MessageDigest.getInstance("SHA-1");
             StringBuilder sb = new StringBuilder();
             for (byte x : md.digest(url.getBytes(StandardCharsets.UTF_8))) sb.append(String.format("%02x", x));
@@ -435,7 +448,7 @@ class Api {
             File data = new File(dir, sb + ".bin"), meta = new File(dir, sb + ".type");
             if (!data.isFile() || !meta.isFile()) {
                 HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-                c.setConnectTimeout(15000);
+                c.setConnectTimeout(6000);
                 c.setReadTimeout(60000);
                 c.setInstanceFollowRedirects(true);
                 if (c.getResponseCode() != 200) { c.disconnect(); return null; }
