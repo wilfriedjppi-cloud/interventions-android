@@ -13,6 +13,20 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Bibliothèques hors connexion (lecteur PDF, OCR, tableur)
+        run: |
+          mkdir -p /tmp/l && cd /tmp/l && npm init -y > /dev/null
+          npm i --no-audit --no-fund tesseract.js@5.1.1 pdfjs-dist@3.11.174 xlsx@0.18.5
+          A=$GITHUB_WORKSPACE/app/src/main/assets/lib
+          mkdir -p $A/pdfjs $A/xlsx $A/tess $A/tess-core $A/tessdata
+          cp node_modules/pdfjs-dist/build/pdf.min.js node_modules/pdfjs-dist/build/pdf.worker.min.js $A/pdfjs/
+          cp node_modules/xlsx/dist/xlsx.full.min.js $A/xlsx/
+          cp node_modules/tesseract.js/dist/tesseract.min.js node_modules/tesseract.js/dist/worker.min.js $A/tess/
+          ls node_modules/tesseract.js-core/
+          cp node_modules/tesseract.js-core/tesseract-core-simd-lstm.wasm.js node_modules/tesseract.js-core/tesseract-core-lstm.wasm.js $A/tess-core/
+          cp node_modules/tesseract.js-core/tesseract-core-simd-lstm.wasm node_modules/tesseract.js-core/tesseract-core-lstm.wasm $A/tess-core/ 2>/dev/null || true
+          for l in fra eng; do curl -fsSL --retry 3 -o $A/tessdata/$l.traineddata.gz https://tessdata.projectnaptha.com/4.0.0/$l.traineddata.gz; done
+          du -sh $A/*; ls -la $A/*
       - name: Compilation
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties

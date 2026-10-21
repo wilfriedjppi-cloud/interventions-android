@@ -31,7 +31,7 @@ import java.util.Map;
 
 /** Le même service que le serveur QPython (/api/…), mais dans l'appli : fichiers dans Documents/Gestion interventions. */
 class Api {
-    static final String VERSION = "appli-2.1";
+    static final String VERSION = "appli-2.2";
     static final String[] SUBS = {"", "Gestion interventions", "Gestion interventions/config/global", "Gestion interventions/config/utilisateur",
             "Gestion interventions/données/OI", "Gestion interventions/données/rapports", "Gestion interventions/données/backup",
             "Gestion interventions/données/gestion", "Gestion interventions/appli"};
@@ -174,6 +174,16 @@ class Api {
         try {
             if (p.equals("/") || p.equals("/index.html") || p.equals("/interventions.html")) return page();
             if (p.equals("/favicon.ico")) return resp(404, "text/plain", new byte[0]);
+            if (p.startsWith("/lib/") && !p.contains("..")) {   // bibliothèques intégrées à l'APK : lecteur PDF, OCR (moteur + langues), tableur
+                try {
+                    InputStream in = ctx.getAssets().open(p.substring(1));
+                    String m = p.endsWith(".wasm") ? "application/wasm" : p.endsWith(".js") ? "application/javascript" : "application/octet-stream";
+                    Map<String, String> h = new HashMap<>();
+                    h.put("Access-Control-Allow-Origin", "*");
+                    h.put("Cache-Control", "max-age=31536000");
+                    return new WebResourceResponse(m, m.contains("javascript") ? "utf-8" : null, 200, "OK", h, in);
+                } catch (Exception e) { return json(404, err("absent de l'appli : " + p)); }
+            }
             if (p.equals("/api/ping")) {
                 JSONObject o = new JSONObject();
                 o.put("ok", true);
