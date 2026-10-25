@@ -38,7 +38,7 @@ import java.util.Locale;
 
 /** Le même service que le serveur QPython (/api/…), mais dans l'appli : fichiers dans Documents/Gestion interventions. */
 class Api {
-    static final String VERSION = "appli-2.4";
+    static final String VERSION = "appli-2.5";
     static final String[] SUBS = {"", "Gestion interventions", "Gestion interventions/config/global", "Gestion interventions/config/utilisateur",
             "Gestion interventions/données/OI", "Gestion interventions/données/rapports", "Gestion interventions/données/backup",
             "Gestion interventions/données/gestion", "Gestion interventions/appli"};
@@ -283,6 +283,30 @@ class Api {
         return -1;
     }
 
+    /* ---------- signature de la page : seule une page signée par l'auteur est acceptée ---------- */
+    static final String PAGE_PUB = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAESsedENqWpdYR7mmu91pXA7k/jnNHdmm9+o9aDx76Mrmwx1KSYreCZWNywWffVPtV9HlL9b4OKITPUp8cgryacg==";
+    static final byte[] SIG_A = "<!-- interventions-sig: ".getBytes(StandardCharsets.US_ASCII), SIG_B = " -->".getBytes(StandardCharsets.US_ASCII);
+    static int indexOf(byte[] h, byte[] n, int from) {
+        outer:
+        for (int i = Math.max(0, from); i <= h.length - n.length; i++) { for (int j = 0; j < n.length; j++) if (h[i + j] != n[j]) continue outer; return i; }
+        return -1;
+    }
+    static boolean signed(byte[] b) {
+        try {
+            if (b == null) return false;
+            int a = indexOf(b, SIG_A, 0); if (a < 0 || a > 4096) return false;
+            int e = indexOf(b, SIG_B, a + SIG_A.length); if (e < 0) return false;
+            byte[] sig = android.util.Base64.decode(new String(b, a + SIG_A.length, e - a - SIG_A.length, StandardCharsets.US_ASCII), android.util.Base64.DEFAULT);
+            java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream(b.length);
+            body.write(b, 0, a); body.write(b, e + SIG_B.length, b.length - e - SIG_B.length);
+            java.security.PublicKey k = java.security.KeyFactory.getInstance("EC").generatePublic(new java.security.spec.X509EncodedKeySpec(android.util.Base64.decode(PAGE_PUB, android.util.Base64.DEFAULT)));
+            java.security.Signature v = java.security.Signature.getInstance("SHA256withECDSA");
+            v.initVerify(k); v.update(body.toByteArray());
+            return v.verify(sig);
+        } catch (Exception e) { return false; }
+    }
+    String refused = "";
+
     static boolean isHtml(String n) { n = n.toLowerCase(); return n.endsWith(".html") || n.endsWith(".htm"); }
 
     /** La page la plus récente du dossier appli : plus grand n° de version, puis la plus récemment modifiée. */
@@ -294,7 +318,7 @@ class Api {
         for (File f : l) {
             if (!f.isFile() || !isHtml(f.getName())) continue;
             int v;
-            try { v = pageVersion(readAll(new FileInputStream(f))); } catch (Exception e) { continue; }
+            try { byte[] b = readAll(new FileInputStream(f)); if (!signed(b)) continue; v = pageVersion(b); } catch (Exception e) { continue; }
             if (best == null || v > bv || (v == bv && f.lastModified() > best.lastModified())) { best = f; bv = v; }
         }
         return best;
@@ -322,25 +346,26 @@ class Api {
     }
 
     byte[] pageBytes() {
-        String m = mode();
+        String m = mode(); refused = "";
         try {
             if (m.equals("url")) {
                 String url = sp.getString("url", "");
                 File cache = new File(ctx.getFilesDir(), "page-web.html");
                 byte[] b = url.isEmpty() ? null : fetchUrl(url);
+                if (b != null && !signed(b)) { refused = "page de l'adresse web refusée (non signée par l'auteur)"; b = null; }
                 if (b != null) {
                     try (OutputStream o = new FileOutputStream(cache)) { o.write(b); }
                     source = "adresse web : " + url;
                     return b;
                 }
-                if (cache.isFile()) { source = "adresse web (copie hors connexion) : " + url; return readAll(new FileInputStream(cache)); }
+                if (cache.isFile()) { byte[] cb = readAll(new FileInputStream(cache)); if (signed(cb)) { source = "adresse web (copie hors connexion) : " + url; return cb; } }
             } else if (m.equals("file")) {
                 String u = sp.getString("uri", "");
                 if (!u.isEmpty()) {
                     try (InputStream in = ctx.getContentResolver().openInputStream(Uri.parse(u))) {
                         byte[] b = readAll(in);
-                        source = "fichier choisi : " + sp.getString("uriName", u);
-                        return b;
+                        if (signed(b)) { source = "fichier choisi : " + sp.getString("uriName", u); return b; }
+                        refused = "page choisie refusée (non signée par l'auteur)";
                     } catch (Exception e) { /* fichier déplacé ou supprimé : recherche automatique */ }
                 }
             }
@@ -352,13 +377,13 @@ class Api {
                 byte[] b = readAll(new FileInputStream(f));
                 int v = pageVersion(b);
                 if (ev <= v) {
-                    source = (m.equals("auto") ? "" : "secours, ") + "automatique : " + f.getAbsolutePath() + (v > 0 ? " (v" + v + ")" : "");
+                    source = (m.equals("auto") ? "" : "secours, ") + "automatique : " + f.getAbsolutePath() + (v > 0 ? " (v" + v + ")" : "") + (refused.isEmpty() ? "" : " — " + refused);
                     return b;
                 }
             }
             if (emb != null) {   // page intégrée à l'APK, plus récente (ou seule) : copiée dans le dossier appli
                 try { if (appDir().isDirectory() || appDir().mkdirs()) { File c = new File(appDir(), "interventions-v" + ev + ".html"); if (!c.isFile()) try (OutputStream o = new FileOutputStream(c)) { o.write(emb); } } } catch (Exception ignored) { }
-                source = "intégrée à l'appli" + (ev > 0 ? " (v" + ev + ")" : "");
+                source = "intégrée à l'appli" + (ev > 0 ? " (v" + ev + ")" : "") + (refused.isEmpty() ? "" : " — " + refused);
                 return emb;
             }
         } catch (Exception ignored) { }
@@ -378,6 +403,7 @@ class Api {
     /** Copie une page HTML (choisie ou reçue par « Ouvrir avec ») dans le dossier appli. */
     String importPage(InputStream in, String name) throws Exception {
         byte[] b = readAll(in);
+        if (!signed(b)) throw new Exception("page non signée par l'auteur (modifiée ou non officielle) : refusée");
         File d = appDir();
         if (!d.isDirectory() && !d.mkdirs()) throw new Exception("impossible de créer " + d.getAbsolutePath());
         if (!isHtml(name)) name = name + ".html";
@@ -570,7 +596,7 @@ class Api {
                 } else if (n.startsWith("appli-utilisee/") && isHtml(n)) {
                     byte[] b = readAll(z.getInputStream(e));
                     int v = pageVersion(b), cur = pageVersion(pageBytes());
-                    if (v > cur) { importPage(new ByteArrayInputStream(b), n.substring(n.lastIndexOf('/') + 1)); html = true; }
+                    if (v > cur && signed(b)) { try { importPage(new ByteArrayInputStream(b), n.substring(n.lastIndexOf('/') + 1)); html = true; } catch (Exception ignored) { } }
                 } else if (n.startsWith("appli-utilisee/") && n.endsWith(".apk")) {
                     apkName = n.substring(n.lastIndexOf('/') + 1);
                     try (InputStream in = z.getInputStream(e); OutputStream o = new FileOutputStream(apkOut)) { byte[] b = new byte[65536]; int k; while ((k = in.read(b)) > 0) o.write(b, 0, k); }

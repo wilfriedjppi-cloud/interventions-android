@@ -376,12 +376,15 @@ public class MainActivity extends Activity {
         String name = displayName(u);
         try {
             if (req == REQ_PAGE) {
+                byte[] pb0; try (InputStream in = getContentResolver().openInputStream(u)) { pb0 = Api.readAll(in); }
+                if (!Api.signed(pb0)) { new AlertDialog.Builder(this).setTitle("Page refusée").setMessage("« " + name + " » n'est pas signée par l'auteur d'Interventions (page modifiée ou non officielle). Elle ne sera pas utilisée.").setPositiveButton("OK", null).show(); return; }
                 try { getContentResolver().takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) { }
                 api.sp.edit().putString("src", "file").putString("uri", u.toString()).putString("uriName", name).apply();
                 reloadPage("Page : " + name);
             } else {
                 final byte[] b;
                 try (InputStream in = getContentResolver().openInputStream(u)) { b = Api.readAll(in); }
+                if (!Api.signed(b)) { new AlertDialog.Builder(this).setTitle("Page refusée").setMessage("« " + name + " » n'est pas signée par l'auteur d'Interventions : page modifiée ou non officielle.\n\nPar sécurité, seules les pages officielles sont installées.").setPositiveButton("OK", null).show(); return; }
                 int nv = Api.pageVersion(b), cv = Api.pageVersion(api.pageBytes());
                 final String nm = name;
                 String msg = nv > 0 && cv > 0 ? (nv > cv ? "Nouvelle version de la page : v" + nv + " (actuelle : v" + cv + ").\n\nFaire la mise à jour ? La page sera copiée dans " + api.appDir().getAbsolutePath() + "."
@@ -531,6 +534,11 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public String appVersion() { return api.versionName(); }
+
+        @JavascriptInterface
+        public String deviceId() {   // identifiant propre à ce téléphone et à cette appli (licence)
+            try { return "A" + android.provider.Settings.Secure.getString(getContentResolver(), android.provider.Settings.Secure.ANDROID_ID); } catch (Exception e) { return ""; }
+        }
 
         @JavascriptInterface
         public String pageInfo() {

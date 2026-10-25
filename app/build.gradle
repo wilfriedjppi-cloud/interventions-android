@@ -6,8 +6,8 @@ android {
         applicationId 'fr.palmero.interventions'
         minSdk 26
         targetSdk 34
-        versionCode 204
-        versionName '2.4'
+        versionCode 205
+        versionName '2.5'
     }
     signingConfigs {
         release {
@@ -18,7 +18,7 @@ android {
         }
     }
     buildTypes {
-        release { minifyEnabled false; signingConfig signingConfigs.release }
+        release { minifyEnabled true; proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'; signingConfig signingConfigs.release }
         debug { signingConfig signingConfigs.release }
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }

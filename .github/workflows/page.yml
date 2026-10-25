@@ -1,0 +1,26 @@
+name: Page protégée
+on:
+  push:
+    paths: ['page/**', 'tools/**', '.github/workflows/page.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  page:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Code illisible
+        run: |
+          mkdir -p /tmp/o && cd /tmp/o && npm init -y > /dev/null && npm i --no-audit --no-fund javascript-obfuscator@4.1.1 > /dev/null
+          cd $GITHUB_WORKSPACE
+          NODE_PATH=/tmp/o/node_modules node tools/protect.js page/interventions.html /tmp/p.html
+          V=$(grep -o 'interventions-version: [0-9]*' /tmp/p.html | head -1 | grep -o '[0-9]*$')
+          cp /tmp/p.html page-obf-v$V.html
+          echo "V=$V" >> $GITHUB_ENV
+      - name: Publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete "page-obf-v$V" --repo "${{ github.repository }}" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "page-obf-v$V" page-obf-v$V.html --repo "${{ github.repository }}" --title "Page v$V (code illisible, à signer)" --notes "Étape intermédiaire : page à signer par l'auteur." --latest=false

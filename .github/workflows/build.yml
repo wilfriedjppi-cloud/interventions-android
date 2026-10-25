@@ -1,6 +1,7 @@
 name: Build APK
 on:
   push:
+    paths-ignore: ['page/**', 'tools/**', '.github/workflows/page.yml']
   workflow_dispatch:
 permissions:
   contents: write
