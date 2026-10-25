@@ -1,5 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="nouvelle" android:enabled="true" android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/sc_new" android:shortcutLongLabel="@string/sc_new">
+        <intent android:action="fr.palmero.interventions.GO" android:targetPackage="fr.palmero.interventions" android:targetClass="fr.palmero.interventions.MainActivity">
+            <extra android:name="go" android:value="new" />
+        </intent>
+    </shortcut>
+    <shortcut android:shortcutId="encours" android:enabled="true" android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/sc_cur" android:shortcutLongLabel="@string/sc_cur">
+        <intent android:action="fr.palmero.interventions.GO" android:targetPackage="fr.palmero.interventions" android:targetClass="fr.palmero.interventions.MainActivity">
+            <extra android:name="go" android:value="cur" />
+        </intent>
+    </shortcut>
+    <shortcut android:shortcutId="aujourdhui" android:enabled="true" android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/sc_today" android:shortcutLongLabel="@string/sc_today">
+        <intent android:action="fr.palmero.interventions.GO" android:targetPackage="fr.palmero.interventions" android:targetClass="fr.palmero.interventions.MainActivity">
+            <extra android:name="go" android:value="today" />
+        </intent>
+    </shortcut>
     <shortcut android:shortcutId="reglages" android:enabled="true" android:icon="@mipmap/ic_launcher"
         android:shortcutShortLabel="@string/sc_court" android:shortcutLongLabel="@string/sc_long">
         <intent android:action="fr.palmero.interventions.REGLAGES" android:targetPackage="fr.palmero.interventions" android:targetClass="fr.palmero.interventions.MainActivity" />

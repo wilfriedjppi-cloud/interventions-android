@@ -38,7 +38,7 @@ import java.util.Locale;
 
 /** Le même service que le serveur QPython (/api/…), mais dans l'appli : fichiers dans Documents/Gestion interventions. */
 class Api {
-    static final String VERSION = "appli-2.5";
+    static final String VERSION = "appli-2.6";
     static final String[] SUBS = {"", "Gestion interventions", "Gestion interventions/config/global", "Gestion interventions/config/utilisateur",
             "Gestion interventions/données/OI", "Gestion interventions/données/rapports", "Gestion interventions/données/backup",
             "Gestion interventions/données/gestion", "Gestion interventions/appli"};

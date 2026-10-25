@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="horizontal" android:padding="6dp" android:background="@drawable/w_bg" android:gravity="center_vertical">
+    <TextView android:id="@+id/w_new" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1.2"
+        android:layout_margin="3dp" android:background="@drawable/w_btn" android:gravity="center" android:text="＋ Nouvelle\nintervention"
+        android:textColor="#1B2330" android:textStyle="bold" android:textSize="13sp" />
+    <TextView android:id="@+id/w_cur" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"
+        android:layout_margin="3dp" android:background="@drawable/w_btn2" android:gravity="center" android:text="📝 Rapport\nen cours"
+        android:textColor="#FFFFFF" android:textSize="13sp" />
+    <TextView android:id="@+id/w_today" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"
+        android:layout_margin="3dp" android:background="@drawable/w_btn2" android:gravity="center" android:text="🏠 Aujour-\nd'hui"
+        android:textColor="#FFFFFF" android:textSize="13sp" />
+</LinearLayout>

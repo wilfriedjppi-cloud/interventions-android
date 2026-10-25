@@ -47,7 +47,10 @@ import java.util.Set;
 public class MainActivity extends Activity {
     static final String HOST = "appassets.androidplatform.net";
     static final String ORIGIN = "https://" + HOST;
-    static final int REQ_FILE = 11, REQ_PERM = 12, REQ_PAGE = 13, REQ_IMPORT = 14, REQ_ZIP = 15;
+    static final int REQ_FILE = 11, REQ_PERM = 12, REQ_PAGE = 13, REQ_IMPORT = 14, REQ_ZIP = 15, REQ_SPEECH = 16, REQ_NOTIF = 17;
+    static final String ACT_GO = "fr.palmero.interventions.GO";
+    int speechId = 0;
+    boolean askedNotif = false;
     static final String ACT_SETTINGS = "fr.palmero.interventions.REGLAGES";
 
     WebView web;
@@ -225,6 +228,12 @@ public class MainActivity extends Activity {
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
         if (req == REQ_PAGE || req == REQ_IMPORT) { pageChosen(req, res == RESULT_OK && data != null ? data.getData() : null); return; }
+        if (req == REQ_SPEECH) {
+            String t = "";
+            if (res == RESULT_OK && data != null) { ArrayList<String> r = data.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS); if (r != null && !r.isEmpty()) t = r.get(0); }
+            web.evaluateJavascript("window.biSpeech&&window.biSpeech(" + speechId + "," + JSONObject.quote(t) + "," + (t.isEmpty() ? "'rien entendu'" : "''") + ")", null);
+            return;
+        }
         if (req == REQ_ZIP) { if (res == RESULT_OK && data != null && data.getData() != null) zipReceived(data.getData()); return; }
         if (req != REQ_FILE || fileCb == null) return;
         Uri[] out = null;
@@ -253,6 +262,8 @@ public class MainActivity extends Activity {
     void handleIntent(Intent i) {
         if (i == null) return;
         if (ACT_SETTINGS.equals(i.getAction())) { web.post(this::showSettings); return; }
+        String go = i.getStringExtra("go");
+        if (go != null && go.matches("[a-z]{2,10}")) { i.removeExtra("go"); pendingJs = "window.biGo&&window.biGo('" + go + "')"; deliverOi(); return; }
         Uri u = null;
         if (Intent.ACTION_VIEW.equals(i.getAction())) u = i.getData();
         else if (Intent.ACTION_SEND.equals(i.getAction())) u = i.getParcelableExtra(Intent.EXTRA_STREAM);
@@ -534,6 +545,29 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public String appVersion() { return api.versionName(); }
+
+        @JavascriptInterface
+        public void listen(final int id) {   // dictée : reconnaissance vocale d'Android (Google), résultat renvoyé à window.biSpeech
+            runOnUiThread(() -> {
+                speechId = id;
+                Intent s = new Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                        .putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                        .putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, "fr-FR").putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, "Parle…");
+                try { startActivityForResult(s, REQ_SPEECH); }
+                catch (ActivityNotFoundException e) { web.evaluateJavascript("window.biSpeech&&window.biSpeech(" + id + ",'','reconnaissance vocale absente : installe ou active l\\'appli Google')", null); }
+            });
+        }
+
+        @JavascriptInterface
+        public void setReminders(String json) {   // relances et rappels de l'agenda, planifiés en notifications
+            Rem.sp(MainActivity.this).edit().putString("json", json == null ? "{}" : json).apply();
+            Rem.schedule(MainActivity.this);
+            try {
+                if (Build.VERSION.SDK_INT >= 33 && new JSONObject(json).optBoolean("on", false) && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED && !askedNotif) {
+                    askedNotif = true; runOnUiThread(() -> requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIF));
+                }
+            } catch (Exception ignored) { }
+        }
 
         @JavascriptInterface
         public String deviceId() {   // identifiant propre à ce téléphone et à cette appli (licence)

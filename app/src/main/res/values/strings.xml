@@ -2,4 +2,8 @@
 <resources>
     <string name="sc_court">Page de l\'appli</string>
     <string name="sc_long">Choisir la page de l\'appli</string>
+    <string name="sc_new">Nouvelle intervention</string>
+    <string name="sc_cur">Rapport en cours</string>
+    <string name="sc_today">Aujourd\'hui</string>
+    <string name="w_desc">Nouvelle intervention, rapport en cours, aujourd\'hui</string>
 </resources>
