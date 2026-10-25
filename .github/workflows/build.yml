@@ -13,14 +13,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Bibliothèques hors connexion (lecteur PDF, OCR, tableur)
+      - name: Bibliothèques hors connexion (lecteur PDF, OCR, tableur, remplissage PDF)
         run: |
           mkdir -p /tmp/l && cd /tmp/l && npm init -y > /dev/null
-          npm i --no-audit --no-fund tesseract.js@5.1.1 pdfjs-dist@3.11.174 xlsx@0.18.5 leaflet@1.9.4
+          npm i --no-audit --no-fund tesseract.js@5.1.1 pdfjs-dist@3.11.174 xlsx@0.18.5 leaflet@1.9.4 pdf-lib@1.17.1
           A=$GITHUB_WORKSPACE/app/src/main/assets/lib
           mkdir -p $A/pdfjs $A/xlsx $A/tess $A/tess-core $A/tessdata
           cp node_modules/pdfjs-dist/build/pdf.min.js node_modules/pdfjs-dist/build/pdf.worker.min.js $A/pdfjs/
           cp node_modules/xlsx/dist/xlsx.full.min.js $A/xlsx/
+          mkdir -p $A/pdflib && cp node_modules/pdf-lib/dist/pdf-lib.min.js $A/pdflib/
           mkdir -p $A/leaflet && cp -r node_modules/leaflet/dist/leaflet.js node_modules/leaflet/dist/leaflet.css node_modules/leaflet/dist/images $A/leaflet/
           cp node_modules/tesseract.js/dist/tesseract.min.js node_modules/tesseract.js/dist/worker.min.js $A/tess/
           ls node_modules/tesseract.js-core/
