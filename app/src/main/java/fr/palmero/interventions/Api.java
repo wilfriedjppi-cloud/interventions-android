@@ -272,14 +272,15 @@ class Api {
 
     File appDir() { return new File(dirOf("Gestion interventions"), "appli"); }
 
+    static final java.util.regex.Pattern PV = java.util.regex.Pattern.compile("interventions-version: (\\d+)|APPVER = \\{\"v\": \"(\\d+)|\\{v:\"(\\d+)\",d:\"\\d\\d/\\d\\d/\\d{4}");
+
+    /** N° de version de la page : repère en tête, sinon dans le script (lisible ou minifié). */
     static int pageVersion(byte[] b) {
         String t = new String(b, StandardCharsets.UTF_8);
-        int i = t.indexOf("APPVER = {\"v\": \"");
-        if (i < 0) return -1;
-        i += 16;
-        int j = i;
-        while (j < t.length() && Character.isDigit(t.charAt(j))) j++;
-        try { return Integer.parseInt(t.substring(i, j)); } catch (Exception e) { return -1; }
+        java.util.regex.Matcher m = PV.matcher(t);
+        if (!m.find()) return -1;
+        for (int g = 1; g <= 3; g++) if (m.group(g) != null) try { return Integer.parseInt(m.group(g)); } catch (Exception ignored) { }
+        return -1;
     }
 
     static boolean isHtml(String n) { n = n.toLowerCase(); return n.endsWith(".html") || n.endsWith(".htm"); }
