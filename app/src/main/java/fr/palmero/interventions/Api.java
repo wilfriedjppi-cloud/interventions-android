@@ -28,10 +28,17 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Enumeration;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
+import java.util.zip.ZipOutputStream;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 
 /** Le même service que le serveur QPython (/api/…), mais dans l'appli : fichiers dans Documents/Gestion interventions. */
 class Api {
-    static final String VERSION = "appli-2.2";
+    static final String VERSION = "appli-2.4";
     static final String[] SUBS = {"", "Gestion interventions", "Gestion interventions/config/global", "Gestion interventions/config/utilisateur",
             "Gestion interventions/données/OI", "Gestion interventions/données/rapports", "Gestion interventions/données/backup",
             "Gestion interventions/données/gestion", "Gestion interventions/appli"};
@@ -232,6 +239,19 @@ class Api {
                 o.put("files", out);
                 return json(200, o);
             }
+            if (p.equals("/api/sizes")) {   // tailles par catégorie pour la sauvegarde .zip
+                JSONObject o = new JSONObject();
+                o.put("ok", true);
+                o.put("cats", sizes());
+                byte[] pb = pageBytes();
+                o.put("html", pb.length);
+                o.put("htmlVersion", pageVersion(pb));
+                File apk = new File(ctx.getApplicationInfo().sourceDir);
+                o.put("apk", apk.length());
+                o.put("apkVersion", versionName());
+                o.put("downloads", Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).getAbsolutePath());
+                return json(200, o);
+            }
             if (p.equals("/api/pdf") || p.equals("/api/inbox")) {
                 File d = p.equals("/api/pdf") ? new File(oiDir()) : new File(ctx.getCacheDir(), "inbox");
                 File f = new File(d, safeName(u.getQueryParameter("name")));
@@ -324,11 +344,21 @@ class Api {
                 }
             }
             File f = newestPage();
+            byte[] emb = null;
+            try { emb = readAll(ctx.getAssets().open("page/interventions.html")); } catch (Exception ignored) { }
+            int ev = emb == null ? -1 : pageVersion(emb);
             if (f != null) {
                 byte[] b = readAll(new FileInputStream(f));
                 int v = pageVersion(b);
-                source = (m.equals("auto") ? "" : "secours, ") + "automatique : " + f.getAbsolutePath() + (v > 0 ? " (v" + v + ")" : "");
-                return b;
+                if (ev <= v) {
+                    source = (m.equals("auto") ? "" : "secours, ") + "automatique : " + f.getAbsolutePath() + (v > 0 ? " (v" + v + ")" : "");
+                    return b;
+                }
+            }
+            if (emb != null) {   // page intégrée à l'APK, plus récente (ou seule) : copiée dans le dossier appli
+                try { if (appDir().isDirectory() || appDir().mkdirs()) { File c = new File(appDir(), "interventions-v" + ev + ".html"); if (!c.isFile()) try (OutputStream o = new FileOutputStream(c)) { o.write(emb); } } } catch (Exception ignored) { }
+                source = "intégrée à l'appli" + (ev > 0 ? " (v" + ev + ")" : "");
+                return emb;
             }
         } catch (Exception ignored) { }
         source = "aucune page trouvée";
@@ -364,6 +394,193 @@ class Api {
         return f.getName();
     }
 
+    /* ---------- sauvegarde complète en .zip (Téléchargements) ---------- */
+    String versionName() {
+        try { return ctx.getPackageManager().getPackageInfo(ctx.getPackageName(), 0).versionName; } catch (Exception e) { return "?"; }
+    }
+
+    File gi() { return dirOf("Gestion interventions"); }
+
+    static long[] dirSize(File d) {
+        long[] r = {0, 0};
+        File[] l = d.listFiles();
+        if (l != null) for (File f : l) {
+            if (f.isDirectory()) { long[] x = dirSize(f); r[0] += x[0]; r[1] += x[1]; }
+            else if (f.isFile() && !f.getName().endsWith(".tmp")) { r[0] += f.length(); r[1]++; }
+        }
+        return r;
+    }
+
+    /** Catégories : chaque dossier de Gestion interventions (et de « données »), plus les fichiers isolés. */
+    JSONArray sizes() throws Exception {
+        JSONArray a = new JSONArray();
+        File g = gi();
+        List<String> keys = new ArrayList<>();
+        File[] l = g.listFiles();
+        long looseS = 0, looseN = 0;
+        if (l != null) for (File f : l) {
+            if (f.isFile()) { looseS += f.length(); looseN++; continue; }
+            if (!f.isDirectory()) continue;
+            if (f.getName().equals("données")) {
+                File[] l2 = f.listFiles();
+                if (l2 != null) for (File x : l2) { if (x.isDirectory()) keys.add("données/" + x.getName()); else if (x.isFile()) { looseS += x.length(); looseN++; } }
+            } else keys.add(f.getName());
+        }
+        Collections.sort(keys);
+        for (String k : keys) {
+            long[] sz = dirSize(new File(g, k));
+            JSONObject o = new JSONObject();
+            o.put("key", k); o.put("size", sz[0]); o.put("n", sz[1]);
+            a.put(o);
+        }
+        if (looseN > 0) { JSONObject o = new JSONObject(); o.put("key", ""); o.put("size", looseS); o.put("n", looseN); a.put(o); }
+        return a;
+    }
+
+    static void addFile(ZipOutputStream z, String name, File f) throws Exception {
+        ZipEntry e = new ZipEntry(name);
+        e.setTime(f.lastModified());
+        z.putNextEntry(e);
+        try (InputStream in = new FileInputStream(f)) { byte[] b = new byte[65536]; int n; while ((n = in.read(b)) > 0) z.write(b, 0, n); }
+        z.closeEntry();
+    }
+
+    static void addBytes(ZipOutputStream z, String name, byte[] b, long t) throws Exception {
+        ZipEntry e = new ZipEntry(name);
+        e.setTime(t);
+        z.putNextEntry(e);
+        z.write(b);
+        z.closeEntry();
+    }
+
+    int addTree(ZipOutputStream z, File d, String prefix) throws Exception {
+        int n = 0;
+        File[] l = d.listFiles();
+        if (l != null) for (File f : l) {
+            if (f.isDirectory()) n += addTree(z, f, prefix + f.getName() + "/");
+            else if (f.isFile() && !f.getName().endsWith(".tmp")) { addFile(z, prefix + f.getName(), f); n++; }
+        }
+        return n;
+    }
+
+    JSONObject makeZip(JSONObject j) throws Exception {
+        File dl = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+        if (!dl.isDirectory() && !dl.mkdirs()) return err("Téléchargements inaccessible");
+        String day = new SimpleDateFormat("yyyy-MM-dd", Locale.FRANCE).format(new Date());
+        int num = 1;
+        File[] ex = dl.listFiles();
+        if (ex != null) for (File f : ex) {
+            String n = f.getName();
+            if (n.startsWith("interventions_" + day + "_") && n.endsWith(".zip")) {
+                try { num = Math.max(num, Integer.parseInt(n.substring(("interventions_" + day + "_").length(), n.length() - 4)) + 1); } catch (Exception ignored) { }
+            }
+        }
+        String name = "interventions_" + day + "_" + num + ".zip";
+        File out = new File(dl, name), tmp = new File(dl, name + ".tmp");
+        JSONArray cats = j.optJSONArray("cats");
+        int files = 0;
+        long now = System.currentTimeMillis();
+        byte[] page = pageBytes();
+        int pv = pageVersion(page);
+        File apk = new File(ctx.getApplicationInfo().sourceDir);
+        try (ZipOutputStream z = new ZipOutputStream(new FileOutputStream(tmp))) {
+            z.setLevel(6);
+            File g = gi();
+            if (cats != null) for (int i = 0; i < cats.length(); i++) {
+                String k = cats.getString(i);
+                if (k.isEmpty()) {   // fichiers isolés de Gestion interventions et de données
+                    for (File base : new File[]{g, new File(g, "données")}) {
+                        File[] l = base.listFiles();
+                        String pre = base.equals(g) ? "Gestion interventions/" : "Gestion interventions/données/";
+                        if (l != null) for (File f : l) if (f.isFile() && !f.getName().endsWith(".tmp")) { addFile(z, pre + f.getName(), f); files++; }
+                    }
+                    continue;
+                }
+                if (!subOk(k)) continue;
+                File d = new File(g, k);
+                if (d.isDirectory()) files += addTree(z, d, "Gestion interventions/" + k + "/");
+            }
+            String mem = j.optString("mem", "");
+            if (!mem.isEmpty()) { addBytes(z, "memoire/appli.json", mem.getBytes(StandardCharsets.UTF_8), now); files++; }
+            if (j.optBoolean("html", true)) { addBytes(z, "appli-utilisee/interventions-v" + (pv > 0 ? pv : 0) + ".html", page, now); files++; }
+            if (j.optBoolean("apk", true) && apk.isFile()) { addFile(z, "appli-utilisee/Interventions-" + versionName() + ".apk", apk); files++; }
+            JSONObject m = new JSONObject();
+            m.put("kind", "interventions-backup");
+            m.put("v", 1);
+            m.put("created", now);
+            m.put("date", new SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.FRANCE).format(new Date(now)));
+            m.put("num", num);
+            m.put("page", pv);
+            m.put("appli", VERSION);
+            m.put("apk", versionName());
+            m.put("cats", cats == null ? new JSONArray() : cats);
+            m.put("files", files);
+            m.put("tech", j.optString("tech", ""));
+            addBytes(z, "manifest.json", m.toString(1).getBytes(StandardCharsets.UTF_8), now);
+        }
+        if (out.exists()) out.delete();
+        if (!tmp.renameTo(out)) return err("écriture du zip refusée");
+        JSONObject o = new JSONObject();
+        o.put("ok", true); o.put("path", out.getAbsolutePath()); o.put("name", name); o.put("size", out.length()); o.put("files", files);
+        return o;
+    }
+
+    static JSONObject zipManifest(File f) {
+        try (ZipFile z = new ZipFile(f)) {
+            ZipEntry e = z.getEntry("manifest.json");
+            if (e == null) return null;
+            JSONObject m = new JSONObject(new String(readAll(z.getInputStream(e)), StandardCharsets.UTF_8));
+            if (!"interventions-backup".equals(m.optString("kind"))) return null;
+            long tot = 0;
+            Enumeration<? extends ZipEntry> en = z.entries();
+            while (en.hasMoreElements()) { ZipEntry x = en.nextElement(); if (x.getSize() > 0) tot += x.getSize(); }
+            m.put("unzipped", tot);
+            m.put("zipSize", f.length());
+            return m;
+        } catch (Exception e) { return null; }
+    }
+
+    /** Restaure : fichiers plus récents que ceux du téléphone, page si plus récente ; la mémoire et l'APK sont rendus à part. */
+    JSONObject restoreZip(File f, File memOut, File apkOut) throws Exception {
+        int put = 0, kept = 0;
+        String apkName = "";
+        boolean mem = false, html = false;
+        File g = gi();
+        try (ZipFile z = new ZipFile(f)) {
+            Enumeration<? extends ZipEntry> en = z.entries();
+            while (en.hasMoreElements()) {
+                ZipEntry e = en.nextElement();
+                String n = e.getName();
+                if (e.isDirectory() || n.contains("..") || n.startsWith("/")) continue;
+                if (n.startsWith("Gestion interventions/")) {
+                    File t = new File(g, n.substring("Gestion interventions/".length()));
+                    if (t.isFile() && t.lastModified() >= e.getTime() - 2000) { kept++; continue; }
+                    File par = t.getParentFile();
+                    if (par != null && !par.isDirectory()) par.mkdirs();
+                    File tmp = new File(t.getPath() + ".tmp");
+                    try (InputStream in = z.getInputStream(e); OutputStream o = new FileOutputStream(tmp)) { byte[] b = new byte[65536]; int k; while ((k = in.read(b)) > 0) o.write(b, 0, k); }
+                    if (t.exists()) t.delete();
+                    tmp.renameTo(t);
+                    t.setLastModified(e.getTime());
+                    put++;
+                } else if (n.equals("memoire/appli.json")) {
+                    try (InputStream in = z.getInputStream(e); OutputStream o = new FileOutputStream(memOut)) { byte[] b = new byte[65536]; int k; while ((k = in.read(b)) > 0) o.write(b, 0, k); }
+                    mem = true;
+                } else if (n.startsWith("appli-utilisee/") && isHtml(n)) {
+                    byte[] b = readAll(z.getInputStream(e));
+                    int v = pageVersion(b), cur = pageVersion(pageBytes());
+                    if (v > cur) { importPage(new ByteArrayInputStream(b), n.substring(n.lastIndexOf('/') + 1)); html = true; }
+                } else if (n.startsWith("appli-utilisee/") && n.endsWith(".apk")) {
+                    apkName = n.substring(n.lastIndexOf('/') + 1);
+                    try (InputStream in = z.getInputStream(e); OutputStream o = new FileOutputStream(apkOut)) { byte[] b = new byte[65536]; int k; while ((k = in.read(b)) > 0) o.write(b, 0, k); }
+                }
+            }
+        }
+        JSONObject o = new JSONObject();
+        o.put("put", put); o.put("kept", kept); o.put("mem", mem); o.put("html", html); o.put("apk", apkName);
+        return o;
+    }
+
     /* ---------- /api/… en écriture (via le pont JavaScript) ---------- */
     String post(String path, String body) {
         try {
@@ -391,6 +608,7 @@ class Api {
                 if (f.isFile()) f.delete();
                 return new JSONObject().put("ok", true).toString();
             }
+            if (path.equals("/api/zip")) return makeZip(j).toString();
             if (path.equals("/api/config")) {
                 SharedPreferences.Editor e = sp.edit();
                 String sd = Environment.getExternalStorageDirectory().getAbsolutePath();

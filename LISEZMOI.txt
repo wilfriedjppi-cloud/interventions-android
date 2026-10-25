@@ -15,7 +15,11 @@ Au premier lancement :
 Ouvrir un OI : dans Gmail, appui sur la piece jointe PDF > Ouvrir avec / Partager > Interventions.
 Les OI telecharges dans Download s'affichent aussi en liste dans l'appli (un appui pour les ouvrir).
 
-Mettre a jour la page sans recompiler : copie le nouveau interventions.html dans
-Documents/Gestion interventions/appli/interventions.html (l'appli le prend en priorite).
+La page est integree a l'APK (app/src/main/assets/page/interventions.html).
+Mettre a jour la page sans recompiler : ouvre le nouveau interventions-vNN.html avec Interventions
+(Fichiers ou Gmail > Ouvrir avec) : l'appli demande confirmation puis le copie dans
+Documents/Gestion interventions/appli (elle prend toujours la page la plus recente).
+Sauvegarde complete : Reglages > Sauvegarde complete (.zip) -> Telechargements/interventions_date_N.zip ;
+ouvrir ce zip avec Interventions propose la restauration (date et versions affichees).
 Pour une nouvelle version de l'appli : remplace les fichiers du depot et laisse GitHub recompiler ;
 la cle de signature (app/interventions.jks) est la meme, la mise a jour s'installe par-dessus.

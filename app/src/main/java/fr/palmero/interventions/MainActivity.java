@@ -47,7 +47,7 @@ import java.util.Set;
 public class MainActivity extends Activity {
     static final String HOST = "appassets.androidplatform.net";
     static final String ORIGIN = "https://" + HOST;
-    static final int REQ_FILE = 11, REQ_PERM = 12, REQ_PAGE = 13, REQ_IMPORT = 14;
+    static final int REQ_FILE = 11, REQ_PERM = 12, REQ_PAGE = 13, REQ_IMPORT = 14, REQ_ZIP = 15;
     static final String ACT_SETTINGS = "fr.palmero.interventions.REGLAGES";
 
     WebView web;
@@ -55,7 +55,7 @@ public class MainActivity extends Activity {
     ValueCallback<Uri[]> fileCb;
     Uri cameraUri;
     File cameraFile;
-    String pendingOi;
+    String pendingOi, pendingJs;
     boolean pageReady, hadAllFiles;
 
     @Override
@@ -225,6 +225,7 @@ public class MainActivity extends Activity {
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
         if (req == REQ_PAGE || req == REQ_IMPORT) { pageChosen(req, res == RESULT_OK && data != null ? data.getData() : null); return; }
+        if (req == REQ_ZIP) { if (res == RESULT_OK && data != null && data.getData() != null) zipReceived(data.getData()); return; }
         if (req != REQ_FILE || fileCb == null) return;
         Uri[] out = null;
         if (res == RESULT_OK) {
@@ -257,7 +258,8 @@ public class MainActivity extends Activity {
         else if (Intent.ACTION_SEND.equals(i.getAction())) u = i.getParcelableExtra(Intent.EXTRA_STREAM);
         if (u == null) return;
         String typ = String.valueOf(i.getType()), dn = displayName(u);
-        if (typ.contains("html") || Api.isHtml(dn)) { pageChosen(REQ_IMPORT, u); return; }   // page HTML reçue : installée dans le dossier appli
+        if (typ.contains("html") || Api.isHtml(dn)) { pageChosen(REQ_IMPORT, u); return; }   // page HTML reçue : mise à jour proposée
+        if (typ.contains("zip") || dn.toLowerCase().endsWith(".zip")) { zipReceived(u); return; }   // sauvegarde .zip : restauration proposée
         try {
             String name = dn;
             if (!name.toLowerCase().endsWith(".pdf")) name = name + ".pdf";
@@ -286,6 +288,7 @@ public class MainActivity extends Activity {
     }
 
     void deliverOi() {
+        if (pageReady && pendingJs != null && web != null) { String js = pendingJs; pendingJs = null; web.evaluateJavascript(js, null); }
         if (!pageReady || pendingOi == null || web == null) return;
         String n = pendingOi;
         pendingOi = null;
@@ -377,14 +380,120 @@ public class MainActivity extends Activity {
                 api.sp.edit().putString("src", "file").putString("uri", u.toString()).putString("uriName", name).apply();
                 reloadPage("Page : " + name);
             } else {
-                String n;
-                try (InputStream in = getContentResolver().openInputStream(u)) { n = api.importPage(in, name); }
-                api.sp.edit().putString("src", "auto").apply();
-                reloadPage("Page installée : " + n);
+                final byte[] b;
+                try (InputStream in = getContentResolver().openInputStream(u)) { b = Api.readAll(in); }
+                int nv = Api.pageVersion(b), cv = Api.pageVersion(api.pageBytes());
+                final String nm = name;
+                String msg = nv > 0 && cv > 0 ? (nv > cv ? "Nouvelle version de la page : v" + nv + " (actuelle : v" + cv + ").\n\nFaire la mise à jour ? La page sera copiée dans " + api.appDir().getAbsolutePath() + "."
+                        : nv == cv ? "Cette page (v" + nv + ") est déjà la version utilisée.\n\nLa réinstaller quand même ?"
+                        : "Cette page (v" + nv + ") est PLUS ANCIENNE que la version utilisée (v" + cv + ").\n\nL'installer quand même ? (retour à l'ancienne version)")
+                        : "Installer la page « " + name + " » dans " + api.appDir().getAbsolutePath() + " ?";
+                new AlertDialog.Builder(this).setTitle(nv > cv ? "Mise à jour de la page" : "Page HTML")
+                        .setMessage(msg)
+                        .setPositiveButton(nv > cv ? "Mettre à jour" : "Installer", (d, w) -> {
+                            try {
+                                String n = api.importPage(new java.io.ByteArrayInputStream(b), nm);
+                                if (nv > 0 && nv < cv) {   // retour volontaire à une version plus ancienne : les pages plus récentes sont écartées
+                                    File[] l = api.appDir().listFiles();
+                                    if (l != null) for (File x : l) { try { if (x.isFile() && Api.isHtml(x.getName()) && Api.pageVersion(Api.readAll(new java.io.FileInputStream(x))) > nv) x.renameTo(new File(x.getPath() + ".ancienne")); } catch (Exception ignored) { } }
+                                }
+                                api.sp.edit().putString("src", "auto").apply();
+                                reloadPage("Page installée : " + n);
+                            } catch (Exception e) { Toast.makeText(this, "Installation impossible : " + e.getMessage(), Toast.LENGTH_LONG).show(); }
+                        })
+                        .setNegativeButton("Annuler", null).show();
             }
         } catch (Exception e) {
             Toast.makeText(this, "Page illisible : " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
+    }
+
+    /* ---------- sauvegarde .zip : reconnue, décrite, puis restaurée si l'utilisateur accepte ---------- */
+    void zipReceived(Uri u) {
+        try {
+            File dir = new File(getCacheDir(), "inbox");
+            dir.mkdirs();
+            final File f = new File(dir, "sauvegarde.zip");
+            try (InputStream in = getContentResolver().openInputStream(u); OutputStream out = new FileOutputStream(f)) {
+                byte[] b = new byte[65536]; int n;
+                while ((n = in.read(b)) > 0) out.write(b, 0, n);
+            }
+            JSONObject m = Api.zipManifest(f);
+            if (m == null) { new AlertDialog.Builder(this).setTitle("Fichier .zip").setMessage("Ce zip n'est pas une sauvegarde de l'appli Interventions (manifest.json absent).").setPositiveButton("OK", null).show(); return; }
+            String info = "Sauvegarde du " + m.optString("date") + " (n° " + m.optInt("num") + " de la journée)"
+                    + "\nPage : v" + m.optInt("page") + " · appli " + m.optString("apk") + " (" + m.optString("appli") + ")"
+                    + "\nFichiers : " + m.optInt("files") + " · " + mo(m.optLong("zipSize")) + " (" + mo(m.optLong("unzipped")) + " décompressé)"
+                    + (m.optString("tech").isEmpty() ? "" : "\nTechnicien : " + m.optString("tech"))
+                    + "\n\nActuellement : page v" + Api.pageVersion(api.pageBytes()) + " · appli " + api.versionName()
+                    + "\n\nRestaurer ? Les fichiers du téléphone plus récents que ceux de la sauvegarde sont gardés.";
+            new AlertDialog.Builder(this).setTitle("Restaurer la sauvegarde ?").setMessage(info)
+                    .setPositiveButton("Restaurer", (d, w) -> restoreZip(f))
+                    .setNegativeButton("Annuler", null).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "Sauvegarde illisible : " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    static String mo(long n) { return n >= 1048576 ? String.format(java.util.Locale.FRANCE, "%.1f Mo", n / 1048576.0) : Math.max(1, n / 1024) + " Ko"; }
+
+    void restoreZip(final File f) {
+        Toast.makeText(this, "Restauration en cours…", Toast.LENGTH_SHORT).show();
+        IO.execute(() -> {
+            try {
+                File inbox = new File(getCacheDir(), "inbox"), share = new File(getCacheDir(), "share");
+                inbox.mkdirs(); share.mkdirs();
+                final File mem = new File(inbox, "memoire.json"), apk = new File(share, "Interventions-sauvegarde.apk");
+                if (mem.exists()) mem.delete();
+                if (apk.exists()) apk.delete();
+                final JSONObject r = api.restoreZip(f, mem, apk);
+                runOnUiThread(() -> {
+                    String js = "window.biRestoreMem&&window.biRestoreMem(" + (r.optBoolean("mem") ? "'/api/inbox?name=memoire.json'" : "null") + "," + JSONObject.quote(r.toString()) + ")";
+                    pendingJs = js;
+                    if (r.optBoolean("html")) reloadPage("Page de la sauvegarde installée"); else deliverOi();
+                    String an = r.optString("apk");
+                    if (!an.isEmpty() && apk.isFile()) {
+                        String v = an.replace("Interventions-", "").replace(".apk", "");
+                        if (newer(v, api.versionName())) {
+                            new AlertDialog.Builder(this).setTitle("Appli de la sauvegarde").setMessage("La sauvegarde contient l'appli " + v + ", plus récente que celle installée (" + api.versionName() + "). L'installer ?")
+                                    .setPositiveButton("Installer", (d, w) -> installApk(apk)).setNegativeButton("Plus tard", null).show();
+                        }
+                    }
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> Toast.makeText(this, "Restauration impossible : " + e.getMessage(), Toast.LENGTH_LONG).show());
+            }
+        });
+    }
+
+    static boolean newer(String a, String b) {
+        String[] x = a.split("\\."), y = b.split("\\.");
+        for (int i = 0; i < Math.max(x.length, y.length); i++) {
+            int p = 0, q = 0;
+            try { p = i < x.length ? Integer.parseInt(x[i].replaceAll("\\D", "")) : 0; } catch (Exception ignored) { }
+            try { q = i < y.length ? Integer.parseInt(y[i].replaceAll("\\D", "")) : 0; } catch (Exception ignored) { }
+            if (p != q) return p > q;
+        }
+        return false;
+    }
+
+    void installApk(File apk) {
+        try {
+            Uri u = FileProvider.getUriForFile(this, getPackageName() + ".files", apk);
+            Intent i = new Intent(Intent.ACTION_VIEW);
+            i.setDataAndType(u, "application/vnd.android.package-archive");
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(i);
+        } catch (Exception e) {
+            Toast.makeText(this, "Installation impossible : " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    void pickZip() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*");
+        i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/zip", "application/x-zip-compressed", "application/octet-stream"});
+        try { startActivityForResult(i, REQ_ZIP); } catch (Exception e) { Toast.makeText(this, "Aucun sélecteur de fichiers", Toast.LENGTH_LONG).show(); }
     }
 
     void reloadPage(String msg) {
@@ -416,6 +525,12 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void importPage() { runOnUiThread(() -> openPicker(REQ_IMPORT)); }
+
+        @JavascriptInterface
+        public void pickBackup() { runOnUiThread(MainActivity.this::pickZip); }
+
+        @JavascriptInterface
+        public String appVersion() { return api.versionName(); }
 
         @JavascriptInterface
         public String pageInfo() {
