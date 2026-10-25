@@ -1,3 +1,7 @@
+Interventions (c) 2026 Wilfried Rouviere. Tous droits reserves.
+Logiciel protege (Code de la propriete intellectuelle, art. L.122-6 et L.335-2) : copie, diffusion,
+modification, decompilation et contournement de la licence interdits sans autorisation ecrite de l'auteur.
+
 Interventions - application Android (APK)
 
 Compilation gratuite avec GitHub (rien a installer sur ton ordinateur) :
@@ -23,3 +27,10 @@ Sauvegarde complete : Reglages > Sauvegarde complete (.zip) -> Telechargements/i
 ouvrir ce zip avec Interventions propose la restauration (date et versions affichees).
 Pour une nouvelle version de l'appli : remplace les fichiers du depot et laisse GitHub recompiler ;
 la cle de signature (app/interventions.jks) est la meme, la mise a jour s'installe par-dessus.
+
+
+Protection (appli 2.5) :
+ - Licence par telephone : Reglages > Licence affiche le code appareil ; la cle (ITV1-...) est signee
+   par l'auteur pour ce seul code. Sans licence, rapports et devis portent "NON LICENCIE".
+ - Seules les pages signees par l'auteur sont acceptees (page modifiee = refusee).
+ - Code de la page rendu illisible (obfuscation), code Java reduit et renomme (R8).
