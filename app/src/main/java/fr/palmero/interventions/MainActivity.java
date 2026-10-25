@@ -47,7 +47,7 @@ import java.util.Set;
 public class MainActivity extends Activity {
     static final String HOST = "appassets.androidplatform.net";
     static final String ORIGIN = "https://" + HOST;
-    static final int REQ_FILE = 11, REQ_PERM = 12, REQ_PAGE = 13, REQ_IMPORT = 14, REQ_ZIP = 15, REQ_SPEECH = 16, REQ_NOTIF = 17;
+    static final int REQ_FILE = 11, REQ_PERM = 12, REQ_PAGE = 13, REQ_IMPORT = 14, REQ_ZIP = 15, REQ_SPEECH = 16, REQ_NOTIF = 17, REQ_CONTACTS = 18;
     static final String ACT_GO = "fr.palmero.interventions.GO";
     int speechId = 0;
     boolean askedNotif = false;
@@ -257,6 +257,15 @@ public class MainActivity extends Activity {
         super.onNewIntent(i);
         setIntent(i);
         handleIntent(i);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int req, String[] perms, int[] res) {
+        super.onRequestPermissionsResult(req, perms, res);
+        if (req == REQ_CONTACTS && web != null) {
+            boolean ok = res.length > 0; for (int r : res) ok &= r == PackageManager.PERMISSION_GRANTED;
+            web.evaluateJavascript("window.biContactsOk&&window.biContactsOk(" + ok + ")", null);
+        }
     }
 
     void handleIntent(Intent i) {
@@ -568,6 +577,22 @@ public class MainActivity extends Activity {
                 }
             } catch (Exception ignored) { }
         }
+
+        @JavascriptInterface
+        public String contactsPerm() {   // 'ok' si l'accès aux contacts est accordé, sinon le demande
+            if (checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED && checkSelfPermission(Manifest.permission.WRITE_CONTACTS) == PackageManager.PERMISSION_GRANTED) return "ok";
+            runOnUiThread(() -> requestPermissions(new String[]{Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS}, REQ_CONTACTS));
+            return "ask";
+        }
+
+        @JavascriptInterface
+        public String contactsFind(String q, boolean org) { return Ct.find(getContentResolver(), q == null ? "" : q, org); }
+
+        @JavascriptInterface
+        public String contactSave(String json) { return Ct.save(getContentResolver(), json); }
+
+        @JavascriptInterface
+        public String contactsAccount() { String a = Ct.googleAccount(getContentResolver()); return a == null ? "" : a; }
 
         @JavascriptInterface
         public String deviceId() {   // identifiant propre à ce téléphone et à cette appli (licence)
