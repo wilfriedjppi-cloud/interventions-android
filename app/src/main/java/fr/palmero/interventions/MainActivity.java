@@ -272,7 +272,7 @@ public class MainActivity extends Activity {
         if (i == null) return;
         if (ACT_SETTINGS.equals(i.getAction())) { web.post(this::showSettings); return; }
         String go = i.getStringExtra("go");
-        if (go != null && go.matches("[a-z]{2,10}")) { i.removeExtra("go"); pendingJs = "window.biGo&&window.biGo('" + go + "')"; deliverOi(); return; }
+        if (go != null && go.matches("[a-z\\-]{2,12}")) { boolean fw = i.getBooleanExtra("fromWidget", false); i.removeExtra("go"); i.removeExtra("fromWidget"); pendingJs = "window.biGo&&window.biGo('" + go + "'," + fw + ")"; deliverOi(); return; }
         Uri u = null;
         if (Intent.ACTION_VIEW.equals(i.getAction())) u = i.getData();
         else if (Intent.ACTION_SEND.equals(i.getAction())) u = i.getParcelableExtra(Intent.EXTRA_STREAM);
@@ -593,6 +593,15 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public String contactsAccount() { String a = Ct.googleAccount(getContentResolver()); return a == null ? "" : a; }
+
+        @JavascriptInterface
+        public void widgetState(String json) {   // nom de l'intervention en cours et pointage du jour, affichés sur le widget
+            getSharedPreferences("wst", MODE_PRIVATE).edit().putString("json", json == null ? "{}" : json).apply();
+            try { PtWidget.refresh(MainActivity.this); } catch (Exception ignored) { }
+        }
+
+        @JavascriptInterface
+        public void back() { runOnUiThread(() -> moveTaskToBack(true)); }   // après un pointage depuis le widget : retour à l'écran d'accueil
 
         @JavascriptInterface
         public String deviceId() {   // identifiant propre à ce téléphone et à cette appli (licence)

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:padding="8dp" android:background="@drawable/w_bg">
+    <TextView android:id="@+id/wp_name" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Intervention en cours" android:textColor="#FFFFFF" android:textStyle="bold" android:textSize="14sp"
+        android:maxLines="1" android:ellipsize="end" android:paddingStart="4dp" android:paddingEnd="4dp" />
+    <TextView android:id="@+id/wp_line" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Appuie sur Début en arrivant" android:textColor="#CFD6E0" android:textSize="12sp"
+        android:maxLines="1" android:ellipsize="end" android:paddingStart="4dp" android:paddingEnd="4dp" android:paddingBottom="4dp" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="horizontal">
+        <TextView android:id="@+id/wp_in" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="3dp"
+            android:background="@drawable/w_btn" android:gravity="center" android:text="▶\nDébut" android:textColor="#1B2330" android:textStyle="bold" android:textSize="13sp" />
+        <TextView android:id="@+id/wp_lunch" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="3dp"
+            android:background="@drawable/w_btn2" android:gravity="center" android:text="🍽\nRepas" android:textColor="#FFFFFF" android:textSize="13sp" />
+        <TextView android:id="@+id/wp_back" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="3dp"
+            android:background="@drawable/w_btn2" android:gravity="center" android:text="↻\nReprise" android:textColor="#FFFFFF" android:textSize="13sp" />
+        <TextView android:id="@+id/wp_out" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_margin="3dp"
+            android:background="@drawable/w_btn" android:gravity="center" android:text="■\nFin" android:textColor="#1B2330" android:textStyle="bold" android:textSize="13sp" />
+    </LinearLayout>
+</LinearLayout>
