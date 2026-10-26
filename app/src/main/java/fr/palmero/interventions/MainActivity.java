@@ -595,6 +595,18 @@ public class MainActivity extends Activity {
         public String contactsAccount() { String a = Ct.googleAccount(getContentResolver()); return a == null ? "" : a; }
 
         @JavascriptInterface
+        public String thermalApps() { return Th.apps(MainActivity.this); }
+
+        @JavascriptInterface
+        public boolean launchApp(String pkg) {
+            if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.READ_MEDIA_IMAGES") != PackageManager.PERMISSION_GRANTED) runOnUiThread(() -> requestPermissions(new String[]{"android.permission.READ_MEDIA_IMAGES"}, REQ_PERM));
+            return Th.launch(MainActivity.this, pkg);
+        }
+
+        @JavascriptInterface
+        public String latestImage(String since) { try { return Th.latest(MainActivity.this, Long.parseLong(since)); } catch (Exception e) { return ""; } }
+
+        @JavascriptInterface
         public void widgetState(String json) {   // nom de l'intervention en cours et pointage du jour, affichés sur le widget
             getSharedPreferences("wst", MODE_PRIVATE).edit().putString("json", json == null ? "{}" : json).apply();
             try { PtWidget.refresh(MainActivity.this); } catch (Exception ignored) { }
