@@ -56,7 +56,12 @@ public class MainActivity extends Activity {
     WebView web;
     Sync syncer;
     synchronized Sync sync() {
-        if (syncer == null) { syncer = new Sync(this, api); syncer.onRemote = () -> runOnUiThread(() -> { if (web != null) web.evaluateJavascript("window.biNetRemote&&window.biNetRemote()", null); }); }
+        if (syncer == null) {
+            syncer = new Sync(this, api);
+            syncer.onRemote = () -> runOnUiThread(() -> { if (web != null) web.evaluateJavascript("window.biNetRemote&&window.biNetRemote()", null); });
+            syncer.onPage = v -> runOnUiThread(() -> new android.os.Handler(getMainLooper()).postDelayed(() -> reloadPage("Page mise à jour depuis l'autre appareil : v" + v), 4000));
+            syncer.onApk = f -> runOnUiThread(() -> askApk(f));
+        }
         return syncer;
     }
     Api api;
@@ -510,6 +515,15 @@ public class MainActivity extends Activity {
         return false;
     }
 
+    boolean apkAsked = false; long apkLast = 0;   // « Plus tard » : redemandé au plus toutes les 30 min
+    void askApk(File apk) {                                   // appli plus récente reçue de l'autre appareil : Android demande toujours la confirmation
+        if (apkAsked || apk == null || !apk.isFile() || System.currentTimeMillis() - apkLast < 30 * 60000L) return; apkAsked = true; apkLast = System.currentTimeMillis();
+        new AlertDialog.Builder(this).setTitle("Mise à jour de l'appli")
+                .setMessage("L'autre appareil a une version plus récente de l'appli Interventions. L'installer maintenant ?\n\nTes données restent en place.")
+                .setPositiveButton("Installer", (d, w) -> { apkAsked = false; installApk(apk); })
+                .setNegativeButton("Plus tard", (d, w) -> apkAsked = false).setCancelable(false).show();
+    }
+
     void installApk(File apk) {
         try {
             Uri u = FileProvider.getUriForFile(this, getPackageName() + ".files", apk);
@@ -639,7 +653,15 @@ public class MainActivity extends Activity {
         public void netSync(final String manual) {   // recopie dans les deux sens avec les appareils joignables, compte rendu à window.biNetSyncDone
             new Thread(() -> {
                 String r = sync().syncAll(manual);
-                runOnUiThread(() -> { if (web != null) web.evaluateJavascript("window.biNetSyncDone&&window.biNetSyncDone(" + JSONObject.quote(r) + ")", null); });
+                runOnUiThread(() -> {
+                    if (web != null) web.evaluateJavascript("window.biNetSyncDone&&window.biNetSyncDone(" + JSONObject.quote(r) + ")", null);
+                    try {                                       // page ou appli plus récente reçue de l'autre appareil
+                        JSONArray ps = new JSONObject(r).optJSONArray("peers"); int pv = 0; String apk = "";
+                        for (int i = 0; ps != null && i < ps.length(); i++) { JSONObject p = ps.getJSONObject(i); pv = Math.max(pv, p.optInt("pageNew", 0)); if (!p.optString("apkNew").isEmpty()) apk = p.optString("apkNew"); }
+                        if (!apk.isEmpty()) askApk(new File(apk));
+                        else if (pv > 0) { final int v = pv; new android.os.Handler(getMainLooper()).postDelayed(() -> reloadPage("Page mise à jour depuis l'autre appareil : v" + v), 3000); }
+                    } catch (Exception ignored) { }
+                });
             }, "bisync-cli").start();
         }
 

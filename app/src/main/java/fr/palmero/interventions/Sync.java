@@ -53,7 +53,9 @@ class Sync {
     NsdManager.RegistrationListener reg;
     NsdManager.DiscoveryListener disc;
     WifiManager.MulticastLock mlock;
-    Runnable onRemote;                                         // l'autre appareil vient de finir une synchro avec celui-ci
+    Runnable onRemote;
+    java.util.function.Consumer<Integer> onPage;               // page mise à jour par l'autre appareil
+    java.util.function.Consumer<File> onApk;                   // appli reçue de l'autre appareil                                         // l'autre appareil vient de finir une synchro avec celui-ci
 
     Sync(Context c, Api a) {
         ctx = c.getApplicationContext();
@@ -175,10 +177,29 @@ class Sync {
             if (token.isEmpty() || !token.equals(h.get("x-pair"))) { reply(out, 403, "{\"error\":\"code de jumelage différent\"}"); return; }
             if (path.equals("/ping")) {
                 JSONObject o = new JSONObject(); o.put("ok", true); o.put("dev", dev); o.put("name", name); o.put("busy", busy.get());
+                o.put("pv", Api.pageVersion(api.pageBytes())); o.put("av", appCode());
                 reply(out, 200, o.toString()); return;
             }
             if (busy.get() && !path.equals("/ping")) { reply(out, 423, "{\"error\":\"occupé\"}"); return; }
             if (path.equals("/list")) { reply(out, 200, listJson().toString()); return; }
+            if (path.equals("/page")) { sendBytes(out, api.pageBytes()); return; }
+            if (path.equals("/apk")) { File f = new File(ctx.getApplicationInfo().sourceDir); out.write(("HTTP/1.0 200 OK\r\nContent-Length: " + f.length() + "\r\n\r\n").getBytes(StandardCharsets.UTF_8)); try (InputStream fi = new FileInputStream(f)) { copy(fi, out, f.length()); } out.flush(); return; }
+            if (path.equals("/pagein")) {                    // page plus récente envoyée par l'autre appareil
+                ByteArrayOutputStream b = new ByteArrayOutputStream(); copy(in, b, len); byte[] pb = b.toByteArray();
+                if (!Api.signed(pb) || Api.pageVersion(pb) <= Api.pageVersion(api.pageBytes())) { reply(out, 200, "{\"ok\":false}"); return; }
+                api.importPage(new java.io.ByteArrayInputStream(pb), "interventions.html");
+                reply(out, 200, "{\"ok\":true}");
+                if (onPage != null) try { onPage.accept(Api.pageVersion(pb)); } catch (Exception ignored) { }
+                return;
+            }
+            if (path.equals("/apkin")) {                     // appli plus récente envoyée par l'autre appareil : proposée à l'installation
+                if (len <= 0 || len > 300L * 1024 * 1024) { reply(out, 400, "{}"); return; }
+                File d = new File(ctx.getCacheDir(), "maj"); d.mkdirs(); File f = new File(d, "Interventions-recue.apk");
+                try (OutputStream fo = new FileOutputStream(f)) { copy(in, fo, len); }
+                reply(out, 200, "{\"ok\":" + (f.length() == len) + "}");
+                if (f.length() == len && onApk != null) try { onApk.accept(f); } catch (Exception ignored) { }
+                return;
+            }
             if (path.equals("/man")) {                       // état commun noté par l'autre appareil : gardé ici aussi (vu de ce côté)
                 ByteArrayOutputStream b = new ByteArrayOutputStream(); copy(in, b, len);
                 String d = qp.getOrDefault("d", "");
@@ -207,6 +228,7 @@ class Sync {
                 JSONObject o = new JSONObject(); o.put("ok", true); o.put("m", f.lastModified());
                 reply(out, 200, o.toString()); return;
             }
+            if (path.equals("/mkdir")) { boolean ok = f.isDirectory() || f.mkdirs(); reply(out, 200, "{\"ok\":" + ok + "}"); return; }
             if (path.equals("/del")) { boolean ok = !f.exists() || f.delete(); reply(out, 200, "{\"ok\":" + ok + "}"); return; }
             reply(out, 404, "{}");
         } catch (Exception ignored) { }
@@ -232,6 +254,7 @@ class Sync {
 
     /** Fichier sous « Gestion interventions », chemin relatif sûr (pas de .., pas de fichiers cachés ni du dossier appli). */
     File fileOf(String rel) {
+        if (rel != null && rel.endsWith("/")) rel = rel.substring(0, rel.length() - 1);
         if (rel == null || rel.isEmpty() || rel.startsWith("/") || rel.contains("\\") || rel.contains("\u0000")) return null;
         String[] parts = rel.split("/", -1);
         if (parts.length > 6) return null;
@@ -253,9 +276,50 @@ class Sync {
             if (n.startsWith(".") || n.endsWith(".tmp") || n.endsWith(".part")) continue;
             if (depth == 0 && n.equals("appli")) continue;            // page et appli propres à chaque appareil
             String rel = pre.isEmpty() ? n : pre + "/" + n;
-            if (f.isDirectory()) walk(f, rel, o, depth + 1);
+            if (f.isDirectory()) { o.put(rel + "/", new JSONArray().put(0L).put(-1L)); walk(f, rel, o, depth + 1); }   // dossiers : même arborescence des deux côtés
             else o.put(rel, new JSONArray().put(f.lastModified()).put(f.length()));
         }
+    }
+
+    long appCode() {
+        try { android.content.pm.PackageInfo pi = ctx.getPackageManager().getPackageInfo(ctx.getPackageName(), 0); return android.os.Build.VERSION.SDK_INT >= 28 ? pi.getLongVersionCode() : pi.versionCode; } catch (Exception e) { return 0; }
+    }
+
+    static void sendBytes(OutputStream out, byte[] b) throws java.io.IOException {
+        out.write(("HTTP/1.0 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: " + b.length + "\r\n\r\n").getBytes(StandardCharsets.UTF_8)); out.write(b); out.flush();
+    }
+
+    /** Mise à jour de la page et de l'appli entre les deux appareils : la plus récente passe sur l'autre. */
+    void updates(String hp, JSONObject ping, JSONObject pr) {
+        try {
+            int rpv = ping.optInt("pv", 0), lpv = Api.pageVersion(api.pageBytes());
+            if (rpv > lpv) {
+                Res r = http(hp, "GET", "/page", null);
+                if (r.code == 200 && Api.signed(r.body) && Api.pageVersion(r.body) > lpv) { api.importPage(new java.io.ByteArrayInputStream(r.body), "interventions.html"); pr.put("pageNew", Api.pageVersion(r.body)); }
+            } else if (lpv > rpv && rpv > 0) {
+                File tmp = File.createTempFile("bipage", ".html", ctx.getCacheDir());
+                try (OutputStream o = new FileOutputStream(tmp)) { o.write(api.pageBytes()); }
+                Res w = http(hp, "POST", "/pagein", tmp); tmp.delete();
+                if (w.code == 200 && new String(w.body, StandardCharsets.UTF_8).contains("true")) pr.put("pageSent", lpv);
+            }
+            long rav = ping.optLong("av", 0), lav = appCode();
+            if (rav > lav && sp.getLong("apkGot", 0) == rav && new File(new File(ctx.getCacheDir(), "maj"), "Interventions-recue.apk").length() == sp.getLong("apkLen", -1)) {
+                pr.put("apkNew", new File(new File(ctx.getCacheDir(), "maj"), "Interventions-recue.apk").getAbsolutePath());   // déjà reçue : pas de nouveau transfert
+            } else if (rav > lav) {
+                File d = new File(ctx.getCacheDir(), "maj"); d.mkdirs(); File f = new File(d, "Interventions-recue.apk");
+                int c = hp.lastIndexOf(':');
+                try (Socket s = new Socket()) {
+                    s.connect(new InetSocketAddress(hp.substring(0, c), Integer.parseInt(hp.substring(c + 1))), 2500); s.setSoTimeout(60000);
+                    OutputStream out = s.getOutputStream(); out.write(("GET /apk HTTP/1.0\r\nX-Pair: " + token + "\r\nContent-Length: 0\r\n\r\n").getBytes(StandardCharsets.UTF_8)); out.flush();
+                    InputStream in = s.getInputStream(); String st = readLine(in); long n = -1; String l;
+                    while ((l = readLine(in)) != null && !l.isEmpty()) if (l.toLowerCase().startsWith("content-length:")) n = Long.parseLong(l.substring(15).trim());
+                    if (st != null && st.contains(" 200 ") && n > 0) { try (OutputStream fo = new FileOutputStream(f)) { copy(in, fo, n); } if (f.length() == n) { pr.put("apkNew", f.getAbsolutePath()); sp.edit().putLong("apkGot", rav).putLong("apkLen", n).apply(); } }
+                }
+            } else if (lav > rav && rav > 0 && sp.getLong("apkSent_" + ping.optString("dev") + "_" + rav, 0) != lav) {   // une seule fois par version
+                Res w = http(hp, "POST", "/apkin", new File(ctx.getApplicationInfo().sourceDir));
+                if (w.code == 200) { pr.put("apkSent", lav); sp.edit().putLong("apkSent_" + ping.optString("dev") + "_" + rav, lav).apply(); }
+            }
+        } catch (Exception e) { try { pr.put("updErr", String.valueOf(e.getMessage())); } catch (Exception ignored) { } }
     }
 
     /* ---------- client : synchro avec un autre appareil ---------- */
@@ -343,6 +407,7 @@ class Sync {
                     pr.put("dev", pd); pr.put("name", o.optString("name"));
                     if (o.optBoolean("busy")) { pr.put("error", "l'autre appareil synchronise déjà"); peers.put(pr); continue; }
                     syncWith(hp, pd, pr);
+                    updates(hp, o, pr);
                 } catch (Exception e) { if (pr.has("dev")) pr.put("error", String.valueOf(e.getMessage())); else continue; }
                 peers.put(pr);
             }
@@ -359,16 +424,27 @@ class Sync {
         JSONObject R = new JSONObject(new String(lr.body, StandardCharsets.UTF_8)), L = listJson();
         JSONObject M; try { M = new JSONObject(sp.getString("m_" + pd, "{}")); } catch (Exception e) { M = new JSONObject(); }
         JSONObject NM = new JSONObject();
-        if (M.length() > 0 && R.length() == 0) throw new Exception("dossier de l'autre appareil vide ou inaccessible : rien n'est supprimé");
-        if (M.length() > 0 && L.length() == 0) throw new Exception("dossier de cet appareil vide ou inaccessible : rien n'est supprimé");
+        int nR = 0, nL = 0;
+        for (java.util.Iterator<String> it = R.keys(); it.hasNext(); ) if (!it.next().endsWith("/")) nR++;
+        for (java.util.Iterator<String> it = L.keys(); it.hasNext(); ) if (!it.next().endsWith("/")) nL++;
+        if (M.length() > 0 && nR == 0) throw new Exception("dossier de l'autre appareil vide ou inaccessible : rien n'est supprimé");
+        if (M.length() > 0 && nL == 0) throw new Exception("dossier de cet appareil vide ou inaccessible : rien n'est supprimé");
         int gone = 0;
-        for (java.util.Iterator<String> it = M.keys(); it.hasNext(); ) { String k = it.next(); if (!L.has(k) || !R.has(k)) gone++; }
+        for (java.util.Iterator<String> it = M.keys(); it.hasNext(); ) { String k = it.next(); if (!k.endsWith("/") && (!L.has(k) || !R.has(k))) gone++; }
         boolean allowDel = gone <= Math.max(20, M.length() / 3);   // trop de disparitions d'un coup : prudence, aucune suppression
         Set<String> all = new java.util.TreeSet<>();
         for (java.util.Iterator<String> it = R.keys(); it.hasNext(); ) all.add(it.next());
         for (java.util.Iterator<String> it = L.keys(); it.hasNext(); ) all.add(it.next());
         int up = 0, down = 0, del = 0, err = 0; long bytes = 0;
+        int dirs = 0;
         for (String p : all) {
+            if (!p.endsWith("/")) continue;
+            File dd = fileOf(p); if (dd == null) continue;
+            if (R.has(p) && !L.has(p)) { if (dd.mkdirs()) dirs++; }
+            else if (L.has(p) && !R.has(p)) { try { if (http(hp, "POST", "/mkdir?p=" + URLEncoder.encode(p, "UTF-8"), null).code == 200) dirs++; } catch (Exception ignored) { } }
+        }
+        for (String p : all) {
+            if (p.endsWith("/")) continue;
             JSONArray l = L.optJSONArray(p), r = R.optJSONArray(p), m = M.optJSONArray(p);
             long lm = l == null ? 0 : l.getLong(0), rm = r == null ? 0 : r.getLong(0);
             boolean lch = l != null && (m == null || Math.abs(lm - m.getLong(0)) > 2000 || l.getLong(1) != m.optLong(2, -1));
@@ -401,7 +477,7 @@ class Sync {
             try (OutputStream o = new FileOutputStream(tmp)) { o.write(SW.toString().getBytes(StandardCharsets.UTF_8)); }
             http(hp, "POST", "/man?d=" + URLEncoder.encode(dev, "UTF-8"), tmp); tmp.delete();
         } catch (Exception ignored) { }
-        pr.put("held", !allowDel); pr.put("up", up); pr.put("down", down); pr.put("del", del); pr.put("err", err); pr.put("bytes", bytes);
+        pr.put("held", !allowDel); pr.put("dirs", dirs); pr.put("up", up); pr.put("down", down); pr.put("del", del); pr.put("err", err); pr.put("bytes", bytes);
     }
 
     String info() {

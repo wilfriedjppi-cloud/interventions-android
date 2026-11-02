@@ -2,4 +2,5 @@
 <paths>
     <cache-path name="share" path="share/" />
     <cache-path name="camera" path="camera/" />
+    <cache-path name="maj" path="maj/" />
 </paths>
