@@ -54,6 +54,11 @@ public class MainActivity extends Activity {
     static final String ACT_SETTINGS = "fr.palmero.interventions.REGLAGES";
 
     WebView web;
+    Sync syncer;
+    synchronized Sync sync() {
+        if (syncer == null) { syncer = new Sync(this, api); syncer.onRemote = () -> runOnUiThread(() -> { if (web != null) web.evaluateJavascript("window.biNetRemote&&window.biNetRemote()", null); }); }
+        return syncer;
+    }
     Api api;
     ValueCallback<Uri[]> fileCb;
     Uri cameraUri;
@@ -167,6 +172,12 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             try { startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)); } catch (Exception ignored) { }
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        try { if (syncer != null) syncer.stop(); } catch (Exception ignored) { }
+        super.onDestroy();
     }
 
     @Override
@@ -614,6 +625,23 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void back() { runOnUiThread(() -> moveTaskToBack(true)); }   // après un pointage depuis le widget : retour à l'écran d'accueil
+
+        @JavascriptInterface
+        public String netSyncStart(String code, String dev, String name) { try { return sync().start(code, dev, name); } catch (Exception e) { return "erreur"; } }   // synchro Wi-Fi : serveur local + annonce
+
+        @JavascriptInterface
+        public void netSyncStop() { try { sync().stop(); } catch (Exception ignored) { } }
+
+        @JavascriptInterface
+        public String netSyncInfo() { try { return sync().info(); } catch (Exception e) { return "{}"; } }
+
+        @JavascriptInterface
+        public void netSync(final String manual) {   // recopie dans les deux sens avec les appareils joignables, compte rendu à window.biNetSyncDone
+            new Thread(() -> {
+                String r = sync().syncAll(manual);
+                runOnUiThread(() -> { if (web != null) web.evaluateJavascript("window.biNetSyncDone&&window.biNetSyncDone(" + JSONObject.quote(r) + ")", null); });
+            }, "bisync-cli").start();
+        }
 
         @JavascriptInterface
         public String deviceId() {   // identifiant propre à ce téléphone et à cette appli (licence)
