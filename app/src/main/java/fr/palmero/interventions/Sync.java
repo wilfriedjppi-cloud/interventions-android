@@ -44,7 +44,7 @@ class Sync {
     final Api api;
     final SharedPreferences sp;
     final AtomicBoolean busy = new AtomicBoolean(false);
-    final ExecutorService pool = Executors.newFixedThreadPool(3);
+    final ExecutorService pool = Executors.newCachedThreadPool();   // chaque demande a son fil : un transfert long ne bloque pas la saisie en direct
     final Map<String, String> found = new LinkedHashMap<>();   // appareils vus sur le réseau : nom -> hôte:port
     ServerSocket server;
     int port = 0;
@@ -54,6 +54,9 @@ class Sync {
     NsdManager.DiscoveryListener disc;
     WifiManager.MulticastLock mlock;
     Runnable onRemote;
+    java.util.function.Consumer<String> onLive;                // saisie de l'autre appareil reçue en direct
+    final Set<String> liveHosts = java.util.Collections.synchronizedSet(new java.util.LinkedHashSet<>());
+    final ExecutorService liveEx = Executors.newSingleThreadExecutor();   // envoi en direct : fil d'exécution à part, l'écran n'attend jamais
     java.util.function.Consumer<Integer> onPage;               // page mise à jour par l'autre appareil
     java.util.function.Consumer<File> onApk;                   // appli reçue de l'autre appareil                                         // l'autre appareil vient de finir une synchro avec celui-ci
 
@@ -180,6 +183,14 @@ class Sync {
                 o.put("pv", Api.pageVersion(api.pageBytes())); o.put("av", appCode());
                 reply(out, 200, o.toString()); return;
             }
+            if (path.equals("/live")) {                       // saisie en direct de l'autre appareil (petit message) : passe même pendant une synchro
+                if (len <= 0 || len > 60L * 1024 * 1024) { reply(out, 400, "{}"); return; }
+                ByteArrayOutputStream b = new ByteArrayOutputStream(); copy(in, b, len);
+                try { String xp = h.get("x-port"); if (xp != null && xp.matches("\\d{2,5}")) liveHosts.add(s.getInetAddress().getHostAddress() + ":" + xp); } catch (Exception ignored) { }
+                if (onLive != null) try { onLive.accept(b.toString("UTF-8")); } catch (Exception ignored) { }   // d'abord l'affichage, puis la réponse
+                try { reply(out, 200, "{\"ok\":true}"); } catch (Exception ignored) { }
+                return;
+            }
             if (busy.get() && !path.equals("/ping")) { reply(out, 423, "{\"error\":\"occupé\"}"); return; }
             if (path.equals("/list")) { reply(out, 200, listJson().toString()); return; }
             if (path.equals("/page")) { sendBytes(out, api.pageBytes()); return; }
@@ -188,7 +199,7 @@ class Sync {
                 ByteArrayOutputStream b = new ByteArrayOutputStream(); copy(in, b, len); byte[] pb = b.toByteArray();
                 if (!Api.signed(pb) || Api.pageVersion(pb) <= Api.pageVersion(api.pageBytes())) { reply(out, 200, "{\"ok\":false}"); return; }
                 api.importPage(new java.io.ByteArrayInputStream(pb), "interventions.html");
-                reply(out, 200, "{\"ok\":true}");
+                try { reply(out, 200, "{\"ok\":true}"); } catch (Exception ignored) { }
                 if (onPage != null) try { onPage.accept(Api.pageVersion(pb)); } catch (Exception ignored) { }
                 return;
             }
@@ -196,7 +207,7 @@ class Sync {
                 if (len <= 0 || len > 300L * 1024 * 1024) { reply(out, 400, "{}"); return; }
                 File d = new File(ctx.getCacheDir(), "maj"); d.mkdirs(); File f = new File(d, "Interventions-recue.apk");
                 try (OutputStream fo = new FileOutputStream(f)) { copy(in, fo, len); }
-                reply(out, 200, "{\"ok\":" + (f.length() == len) + "}");
+                try { reply(out, 200, "{\"ok\":" + (f.length() == len) + "}"); } catch (Exception ignored) { }
                 if (f.length() == len && onApk != null) try { onApk.accept(f); } catch (Exception ignored) { }
                 return;
             }
@@ -204,7 +215,7 @@ class Sync {
                 ByteArrayOutputStream b = new ByteArrayOutputStream(); copy(in, b, len);
                 String d = qp.getOrDefault("d", "");
                 if (!d.isEmpty() && d.length() < 80) sp.edit().putString("m_" + d, b.toString("UTF-8")).putLong("t_" + d, System.currentTimeMillis()).apply();
-                reply(out, 200, "{\"ok\":true}");
+                try { reply(out, 200, "{\"ok\":true}"); } catch (Exception ignored) { }
                 try { if (onRemote != null) onRemote.run(); } catch (Exception ignored) { }
                 return;
             }
@@ -322,6 +333,30 @@ class Sync {
         } catch (Exception e) { try { pr.put("updErr", String.valueOf(e.getMessage())); } catch (Exception ignored) { } }
     }
 
+    /** Envoi en direct (saisie) à l'autre appareil : file d'attente à part ; seul le dernier état non parti compte. */
+    final java.util.concurrent.ConcurrentLinkedQueue<String> liveQ = new java.util.concurrent.ConcurrentLinkedQueue<>();
+    void live(String json) {
+        if (token.isEmpty() || json == null) return;
+        liveQ.add(json);
+        liveEx.execute(() -> {
+            String m = liveQ.poll(); if (m == null) return;
+            byte[] body = m.getBytes(StandardCharsets.UTF_8);
+            String[] hs; synchronized (liveHosts) { hs = liveHosts.toArray(new String[0]); }
+            for (String hp : hs) {
+                try {
+                    int c = hp.lastIndexOf(':');
+                    try (Socket so = new Socket()) {
+                        so.connect(new InetSocketAddress(hp.substring(0, c), Integer.parseInt(hp.substring(c + 1))), 1500); so.setSoTimeout(5000);
+                        OutputStream out = so.getOutputStream();
+                        out.write(("POST /live HTTP/1.0\r\nX-Pair: " + token + "\r\nX-Port: " + port + "\r\nContent-Length: " + body.length + "\r\n\r\n").getBytes(StandardCharsets.UTF_8)); out.write(body); out.flush();
+                        String st = readLine(so.getInputStream());
+                        if (st == null || !st.contains(" 200 ")) liveHosts.remove(hp);
+                    }
+                } catch (Exception e) { liveHosts.remove(hp); }   // plus joignable : retrouvé à la prochaine synchro
+            }
+        });
+    }
+
     /* ---------- client : synchro avec un autre appareil ---------- */
     static class Res { int code; byte[] body; long mt; }
 
@@ -405,6 +440,7 @@ class Sync {
                     if (pd.isEmpty() || pd.equals(dev) || seen.contains(pd)) continue;
                     seen.add(pd);
                     pr.put("dev", pd); pr.put("name", o.optString("name"));
+                    liveHosts.add(hp);
                     if (o.optBoolean("busy")) { pr.put("error", "l'autre appareil synchronise déjà"); peers.put(pr); continue; }
                     syncWith(hp, pd, pr);
                     updates(hp, o, pr);

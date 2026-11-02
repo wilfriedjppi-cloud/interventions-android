@@ -61,6 +61,7 @@ public class MainActivity extends Activity {
             syncer.onRemote = () -> runOnUiThread(() -> { if (web != null) web.evaluateJavascript("window.biNetRemote&&window.biNetRemote()", null); });
             syncer.onPage = v -> runOnUiThread(() -> new android.os.Handler(getMainLooper()).postDelayed(() -> reloadPage("Page mise à jour depuis l'autre appareil : v" + v), 4000));
             syncer.onApk = f -> runOnUiThread(() -> askApk(f));
+            syncer.onLive = j -> runOnUiThread(() -> { if (web != null) web.evaluateJavascript("window.biLive&&window.biLive(" + JSONObject.quote(j) + ")", null); });
         }
         return syncer;
     }
@@ -642,6 +643,9 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public String netSyncStart(String code, String dev, String name) { try { return sync().start(code, dev, name); } catch (Exception e) { return "erreur"; } }   // synchro Wi-Fi : serveur local + annonce
+
+        @JavascriptInterface
+        public void netLive(String json) { try { sync().live(json); } catch (Exception ignored) { } }   // saisie envoyée en direct à l'autre appareil (fil à part)
 
         @JavascriptInterface
         public void netSyncStop() { try { sync().stop(); } catch (Exception ignored) { } }
