@@ -5,6 +5,6 @@
     <string name="sc_new">Nouvelle intervention</string>
     <string name="sc_cur">Rapport en cours</string>
     <string name="sc_today">Aujourd\'hui</string>
-    <string name="w_desc">Nouvelle intervention, rapport en cours, aujourd\'hui</string>
+    <string name="w_desc">Jusqu\'à 8 boutons de ton choix (Réglages → Widget personnalisé)</string>
     <string name="wp_desc">Pointage : début, repas, reprise, fin d\'intervention</string>
 </resources>

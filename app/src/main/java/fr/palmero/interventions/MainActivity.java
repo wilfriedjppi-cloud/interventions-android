@@ -289,7 +289,7 @@ public class MainActivity extends Activity {
         if (i == null) return;
         if (ACT_SETTINGS.equals(i.getAction())) { web.post(this::showSettings); return; }
         String go = i.getStringExtra("go");
-        if (go != null && go.matches("[a-z\\-]{2,12}")) { boolean fw = i.getBooleanExtra("fromWidget", false); i.removeExtra("go"); i.removeExtra("fromWidget"); pendingJs = "window.biGo&&window.biGo('" + go + "'," + fw + ")"; deliverOi(); return; }
+        if (go != null && go.matches("[a-z0-9\\-]{2,12}")) { boolean fw = i.getBooleanExtra("fromWidget", false); i.removeExtra("go"); i.removeExtra("fromWidget"); pendingJs = "window.biGo&&window.biGo('" + go + "'," + fw + ")"; deliverOi(); return; }
         Uri u = null;
         if (Intent.ACTION_VIEW.equals(i.getAction())) u = i.getData();
         else if (Intent.ACTION_SEND.equals(i.getAction())) u = i.getParcelableExtra(Intent.EXTRA_STREAM);
@@ -631,6 +631,12 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public String latestImage(String since) { try { return Th.latest(MainActivity.this, Long.parseLong(since)); } catch (Exception e) { return ""; } }
+
+        @JavascriptInterface
+        public void widgetItems(String json) {   // boutons du widget personnalisé (Réglages → Widget personnalisé)
+            getSharedPreferences("wst", MODE_PRIVATE).edit().putString("items", json == null ? "[]" : json).apply();
+            try { Widget.refresh(MainActivity.this); } catch (Exception ignored) { }
+        }
 
         @JavascriptInterface
         public void widgetState(String json) {   // nom de l'intervention en cours et pointage du jour, affichés sur le widget
