@@ -161,6 +161,7 @@ public class MainActivity extends Activity {
                 ? new String[]{Manifest.permission.CAMERA, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.RECORD_AUDIO, Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE}
                 : new String[]{Manifest.permission.CAMERA, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.RECORD_AUDIO};
         for (String p : all) if (checkSelfPermission(p) != PackageManager.PERMISSION_GRANTED) need.add(p);
+        if (Build.VERSION.SDK_INT >= 29 && checkSelfPermission(Manifest.permission.ACCESS_MEDIA_LOCATION) != PackageManager.PERMISSION_GRANTED) need.add(Manifest.permission.ACCESS_MEDIA_LOCATION);   // position GPS des photos de la galerie (sinon effacée par Android)
         if (!need.isEmpty()) requestPermissions(need.toArray(new String[0]), REQ_PERM);
         if (Build.VERSION.SDK_INT >= 30 && !Environment.isExternalStorageManager()) {
             new AlertDialog.Builder(this)
@@ -262,10 +263,26 @@ public class MainActivity extends Activity {
                 else if (data.getData() != null) l.add(data.getData());
             }
             if (l.isEmpty() && cameraFile != null && cameraFile.length() > 0) l.add(cameraUri);
+            for (int i = 0; i < l.size(); i++) l.set(i, original(l.get(i)));
             if (!l.isEmpty()) out = l.toArray(new Uri[0]);
         }
         fileCb.onReceiveValue(out);
         fileCb = null;
+    }
+
+    /** Photo de la galerie : version d'origine (Android efface sinon la position GPS des métadonnées). */
+    Uri original(Uri u) {
+        if (u == null || Build.VERSION.SDK_INT < 29 || checkSelfPermission(Manifest.permission.ACCESS_MEDIA_LOCATION) != PackageManager.PERMISSION_GRANTED) return u;
+        try {
+            Uri m = u;
+            if (android.provider.DocumentsContract.isDocumentUri(this, u)) { try { Uri g = MediaStore.getMediaUri(this, u); if (g != null) m = g; } catch (Exception ignored) { } }
+            if (!MediaStore.AUTHORITY.equals(m.getAuthority()) || m.getPath() == null || m.getPath().contains("/picker")) return u;
+            String t = getContentResolver().getType(m);
+            if (t != null && !t.startsWith("image/")) return u;
+            Uri o = MediaStore.setRequireOriginal(m);
+            try (java.io.InputStream in = getContentResolver().openInputStream(o)) { if (in == null) return u; }   // lisible : on la garde
+            return o;
+        } catch (Exception e) { return u; }
     }
 
     /* ---------- OI reçus (« Ouvrir avec » ou « Partager » depuis Gmail, Fichiers…) ---------- */
