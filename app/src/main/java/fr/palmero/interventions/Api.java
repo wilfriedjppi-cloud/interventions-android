@@ -38,7 +38,7 @@ import java.util.Locale;
 
 /** Le même service que le serveur QPython (/api/…), mais dans l'appli : fichiers dans Documents/Gestion interventions. */
 class Api {
-    static final String VERSION = "appli-3.3";
+    static final String VERSION = "appli-3.4";
     static final String[] SUBS = {"", "Gestion interventions", "Gestion interventions/config/global", "Gestion interventions/config/utilisateur",
             "Gestion interventions/données/OI", "Gestion interventions/données/rapports", "Gestion interventions/données/backup",
             "Gestion interventions/données/gestion", "Gestion interventions/appli"};
@@ -51,7 +51,7 @@ class Api {
             + "return of(u,o);};"
             + "function b64(buf){var u=new Uint8Array(buf),s='',i;for(i=0;i<u.length;i+=32768)s+=String.fromCharCode.apply(null,u.subarray(i,i+32768));return btoa(s);}"
             + "function sh(d){d=d||{};return Promise.all((d.files||[]).map(function(f){return f.arrayBuffer().then(function(b){return {name:f.name,type:f.type,b64:b64(b)};});}))"
-            + ".then(function(fs){var r=A.share(JSON.stringify({title:d.title||'',text:d.text||'',url:d.url||'',to:d.to||'',gmail:!!d.gmail,files:fs}));if(r!=='ok')throw new Error(r);});}"
+            + ".then(function(fs){var r=A.share(JSON.stringify({title:d.title||'',text:d.text||'',url:d.url||'',to:d.to||'',gmail:!!d.gmail,pkg:d.pkg||'',files:fs}));if(r!=='ok')throw new Error(r);});}"
             + "try{Object.defineProperty(navigator,'share',{value:sh,configurable:true});Object.defineProperty(navigator,'canShare',{value:function(){return true;},configurable:true});}catch(e){navigator.share=sh;navigator.canShare=function(){return true;};}"
             + "window.__appBack=function(){var l=Array.prototype.filter.call(document.querySelectorAll('.over,[id$=\"-ov\"],#crop,#ann,#cfgb'),function(e){return !e.hidden&&e.getClientRects().length;});"
             + "if(l.length){l[l.length-1].hidden=true;return true;}return false;};"

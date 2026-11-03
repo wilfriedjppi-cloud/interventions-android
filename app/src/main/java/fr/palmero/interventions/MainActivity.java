@@ -633,6 +633,20 @@ public class MainActivity extends Activity {
         public String latestImage(String since) { try { return Th.latest(MainActivity.this, Long.parseLong(since)); } catch (Exception e) { return ""; } }
 
         @JavascriptInterface
+        public String clipText() {   // texte copié (réponse de Claude) : lu seulement quand l'utilisateur appuie sur « Coller »
+            final String[] r = { "" }; final java.util.concurrent.CountDownLatch l = new java.util.concurrent.CountDownLatch(1);
+            runOnUiThread(() -> {
+                try { android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE); ClipData c = cm == null ? null : cm.getPrimaryClip(); if (c != null && c.getItemCount() > 0) { CharSequence t = c.getItemAt(0).coerceToText(MainActivity.this); r[0] = t == null ? "" : t.toString(); } } catch (Exception ignored) { }
+                l.countDown();
+            });
+            try { l.await(2, java.util.concurrent.TimeUnit.SECONDS); } catch (Exception ignored) { }
+            return r[0];
+        }
+
+        @JavascriptInterface
+        public boolean hasApp(String pkg) { try { getPackageManager().getPackageInfo(pkg, 0); return true; } catch (Exception e) { return false; } }
+
+        @JavascriptInterface
         public void widgetItems(String json) {   // boutons du widget personnalisé (Réglages → Widget personnalisé)
             getSharedPreferences("wst", MODE_PRIVATE).edit().putString("items", json == null ? "[]" : json).apply();
             try { Widget.refresh(MainActivity.this); } catch (Exception ignored) { }
@@ -740,7 +754,13 @@ public class MainActivity extends Activity {
                 if (!to.isEmpty()) s.putExtra(Intent.EXTRA_EMAIL, to.split("\\s*[,;]\\s*"));
                 s.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 final boolean gm = o.optBoolean("gmail", false);
+                final String pkg = o.optString("pkg", "");
                 runOnUiThread(() -> {
+                    if (!pkg.isEmpty() && pkg.matches("[a-zA-Z0-9_.]{3,80}")) {   // appli choisie directement (ex : Claude)
+                        Intent g = new Intent(s);
+                        g.setPackage(pkg);
+                        try { startActivity(g); return; } catch (ActivityNotFoundException e) { /* appli absente : choix de l'appli */ }
+                    }
                     if (gm) {   // mail prêt directement dans Gmail : destinataire, objet, texte, pièces jointes
                         Intent g = new Intent(s);
                         g.setPackage("com.google.android.gm");
