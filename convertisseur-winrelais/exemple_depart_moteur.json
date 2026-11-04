@@ -1,0 +1,41 @@
+{
+  "societe": "Palmero Industrie",
+  "adresse": "290 rue des peupliers, 82170 Grisolles",
+  "dessinateur": "ROUVIERE",
+  "date": "04/11/2026",
+  "titre_dessin": "Exemple - départ moteur",
+  "folios": [
+    {
+      "titre": "Départ moteur 3~",
+      "composants": [
+        {"type": "borne", "ref": "L1", "x": 40, "y": 22},
+        {"type": "borne", "ref": "L2", "x": 48, "y": 22},
+        {"type": "borne", "ref": "L3", "x": 56, "y": 22},
+        {"type": "disjoncteur_moteur", "ref": "QF1", "x": 40, "y": 40,
+         "textes": {"2": "GV2P14"}},
+        {"type": "contacteur_3p", "ref": "KM1", "x": 40, "y": 80},
+        {"type": "moteur_3", "ref": "M1", "x": 56, "y": 110,
+         "broches": {"U": "W", "W": "U"}, "textes": {"1": "2,2 kW"}}
+      ],
+      "liaisons": [
+        {"de": "L1:2", "vers": "QF1:1/L1", "type": "puissance"},
+        {"de": "L2:2", "vers": "QF1:3/L2", "type": "puissance"},
+        {"de": "L3:2", "vers": "QF1:5/L3", "type": "puissance"},
+        {"de": "QF1:2/T1", "vers": "KM1:1/L1", "type": "puissance"},
+        {"de": "QF1:4/T2", "vers": "KM1:3/L2", "type": "puissance"},
+        {"de": "QF1:6/T3", "vers": "KM1:5/L3", "type": "puissance"},
+        {"de": "KM1:2/T1", "vers": "M1:U", "type": "puissance"},
+        {"de": "KM1:4/T2", "vers": "M1:V", "type": "puissance"},
+        {"de": "KM1:6/T3", "vers": "M1:W", "type": "puissance"}
+      ],
+      "reperes": [
+        {"x": 40, "y": 33, "texte": "L11"},
+        {"x": 48, "y": 33, "texte": "L12"},
+        {"x": 56, "y": 33, "texte": "L13"}
+      ],
+      "textes": [
+        {"x": 20, "y": 14, "texte": "Alimentation 3x400V", "gras": true}
+      ]
+    }
+  ]
+}

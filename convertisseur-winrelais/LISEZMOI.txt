@@ -1,0 +1,54 @@
+CONVERTISSEUR SCHEMA JSON -> WINRELAIS (.xrs)           Windows 10
+=====================================================================
+
+UTILISATION
+  1. Lancer ConvertisseurWinRelais.exe
+  2. Choisir le schema .json, le nom du .xrs de sortie, cliquer "Convertir".
+  3. Ouvrir le .xrs dans WinRelais.
+  Le bouton "Types de symboles" liste les composants disponibles et leurs broches.
+
+SANS L'EXE (Python 3.9+ installe)
+  python convertisseur.py schema.json -o schema.xrs
+  python convertisseur.py --types
+  Construire l'exe : double-clic sur build.bat
+  ou : pousser ce dossier sur GitHub, onglet Actions > "Build exe Windows" > Run workflow,
+       l'exe est dans les artefacts du run.
+
+FORMAT DU JSON  (coordonnees en mm, origine en haut a gauche, A4 = 297 x 210)
+  (les commentaires "# ..." ci-dessous sont a ne pas recopier : le JSON n en accepte pas)
+  {
+    "societe": "...", "adresse": "...", "dessinateur": "...", "date": "jj/mm/aaaa",
+    "titre_dessin": "...",
+    "folios": [ {
+      "titre": "Titre du folio",
+      "composants": [
+        {"type": "borne", "ref": "L1", "x": 40, "y": 22,
+         "textes": {"2": "GV2P14"},          # ligne de texte n -> texte (0 = repere)
+         "broches": {"U": "W", "W": "U"},    # renommage de broches (facultatif)
+         "id": "L1bis"}                      # facultatif : si 2 composants ont le meme repere
+      ],
+      "liaisons": [
+        {"de": "L1:2", "vers": "QF1:1/L1", "type": "puissance",
+         "via": [[40, 30]]}                  # points intermediaires (facultatif)
+      ],
+      "fils":      [{"points": [[x,y],[x,y]], "type": "terre"}],
+      "jonctions": [[x, y]],
+      "reperes":   [{"x": 40, "y": 33, "texte": "L11"}],     # numeros de fils
+      "textes":    [{"x": 20, "y": 14, "texte": "...", "taille": 400, "gras": true, "angle": 0}],
+      "cadres":    [{"x1": 10, "y1": 10, "x2": 90, "y2": 60}]
+    } ]
+  }
+
+  - "de"/"vers" = "identifiant:broche". Broches : voir "Types de symboles".
+  - Position x,y d'un composant = son point d'origine (1re broche pour la plupart).
+  - Types de fil : commande, puissance, neutre, terre.
+  - Une liaison entre deux points non alignes est tracee en L (vertical puis horizontal).
+  - Les positions sont calees sur la grille de 2 mm (case a decocher dans l'appli).
+  - Caracteres : Latin-1 uniquement (accents francais OK, pas d'emoji ni de caracteres speciaux).
+
+LIMITES
+  - Symboles disponibles = ceux de bibliotheque.xrs. Pour en ajouter : choisir comme
+    "Bibliotheque" un .xrs WinRelais qui contient ces symboles.
+  - Les contacts ne sont pas relies automatiquement aux bobines : seul le meme repere
+    les associe, comme dans WinRelais.
+  - Pas de placement automatique : les coordonnees sont a fournir dans le JSON.
