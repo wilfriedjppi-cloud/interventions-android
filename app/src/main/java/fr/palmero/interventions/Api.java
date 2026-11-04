@@ -38,7 +38,7 @@ import java.util.Locale;
 
 /** Le même service que le serveur QPython (/api/…), mais dans l'appli : fichiers dans Documents/Gestion interventions. */
 class Api {
-    static final String VERSION = "appli-3.7";
+    static final String VERSION = "appli-3.8";
     static final String[] SUBS = {"", "Gestion interventions", "Gestion interventions/config/global", "Gestion interventions/config/utilisateur",
             "Gestion interventions/données/OI", "Gestion interventions/données/rapports", "Gestion interventions/données/backup",
             "Gestion interventions/données/gestion", "Gestion interventions/appli"};
@@ -454,7 +454,8 @@ class Api {
     /* ---------- dossiers WillRelais : chemins relatifs à la mémoire interne (/storage/emulated/0), identiques sur les deux appareils ---------- */
     static File ext() { return Environment.getExternalStorageDirectory(); }
     SharedPreferences wsp() { return ctx.getSharedPreferences("willrelais", Context.MODE_PRIVATE); }
-    static boolean isWrFile(String n) { n = n.toLowerCase(); return n.endsWith(".xrs") || n.endsWith(".xsy") || n.endsWith("_nomenclature.csv"); }
+    static boolean isWrFile(String n) { n = n.toLowerCase(); return n.endsWith(".xrs") || n.endsWith(".xsy") || n.endsWith("_nomenclature.csv") || n.endsWith(".photos.json") || n.equals(WR_LIB.toLowerCase()); }
+    static final String WR_LIB = "Bibliothèque symboles.json";   // bibliothèque de symboles de WillRelais, dans le dossier WillRelais
     /** Chemin relatif sûr (pas de .., pas de dossier caché, pas de Android/) → fichier ; null si refusé. */
     static File extFile(String rel) {
         if (rel == null) return null;

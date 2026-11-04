@@ -70,6 +70,7 @@ public class MainActivity extends Activity {
     Uri cameraUri;
     File cameraFile;
     String pendingOi, pendingJs;
+    String editFrom;   // photo de WillRelais en cours de modification
     boolean pageReady, hadAllFiles;
 
     @Override
@@ -314,6 +315,8 @@ public class MainActivity extends Activity {
     void handleIntent(Intent i) {
         if (i == null) return;
         if (ACT_SETTINGS.equals(i.getAction())) { web.post(this::showSettings); return; }
+        String ep = i.getStringExtra("editPhoto");   // photo d'un schéma WillRelais : ouverte dans l'éditeur de photo
+        if (ep != null) { i.removeExtra("editPhoto"); if (ep.matches("wrphoto-[A-Za-z0-9]+\\.jpg")) { editFrom = ep; pendingJs = "window.biEditExt?window.biEditExt('/api/inbox?name=" + Uri.encode(ep) + "'," + JSONObject.quote(ep) + "):(window.AndroidApi&&AndroidApi.photoDone(" + JSONObject.quote(ep) + ",''))"; deliverOi(); } return; }
         String go = i.getStringExtra("go");
         if (go != null && go.matches("[a-z0-9\\-]{2,12}")) { boolean fw = i.getBooleanExtra("fromWidget", false); i.removeExtra("go"); i.removeExtra("fromWidget"); pendingJs = "window.biGo&&window.biGo('" + go + "'," + fw + ")"; deliverOi(); return; }
         Uri u = null;
@@ -624,6 +627,21 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void openWr() { runOnUiThread(MainActivity.this::openWr); }
+
+        /** Fin de la modification d'une photo de WillRelais : la photo (vide = annulé) repart vers WillRelais. */
+        @JavascriptInterface
+        public void photoDone(String name, String b64) {
+            try {
+                String n = Api.safeName(name); if (!n.matches("wrphoto-[A-Za-z0-9]+\\.jpg")) return;
+                Intent w = new Intent(MainActivity.this, WrActivity.class).setAction(ACT_GO);
+                if (b64 != null && !b64.isEmpty()) {
+                    String out = n.replace(".jpg", "-ok.jpg"); File dir = new File(getCacheDir(), "inbox"); dir.mkdirs();
+                    try (OutputStream o = new FileOutputStream(new File(dir, out))) { o.write(android.util.Base64.decode(b64, android.util.Base64.DEFAULT)); }
+                    w.putExtra("photoDone", out);
+                }
+                runOnUiThread(() -> { editFrom = null; startActivity(w); });
+            } catch (Exception e) { runOnUiThread(() -> Toast.makeText(MainActivity.this, "Photo : " + e.getMessage(), Toast.LENGTH_LONG).show()); }
+        }
 
         @JavascriptInterface
         public void listen(final int id) {   // dictée : reconnaissance vocale d'Android (Google), résultat renvoyé à window.biSpeech

@@ -12,8 +12,17 @@
   function up(p) { var i = p.lastIndexOf('/'); return i < 0 ? '' : p.slice(0, i); }
   function join(a, b) { return a ? a + '/' + b : b; }
 
+  /* photos du schéma : fichier compagnon nom.photos.json cherché dans le dossier du schéma, le dossier d'enregistrement et le dossier WillRelais */
+  window.__wlLoadSide = function (name) {
+    if (!W.readText) return '';
+    var st = J(W.state()), dirs = [window.__wlOpenDir, st.cur, st.def].filter(function (d, i, a) { return d != null && a.indexOf(d) === i; });
+    var b = String(name || '').replace(/\.xrs$/i, ''), bases = [b, b.replace(/(_modifié)+$/, '')];
+    for (var i = 0; i < dirs.length; i++) for (var j = 0; j < bases.length; j++) { var t = W.readText(join(dirs[i], bases[j] + '.photos.json')); if (t) return t; }
+    return '';
+  };
   window.print = function () { W.print(document.title || 'Schéma'); };
-  window.__wrOpen = function (u, name) {
+  window.__wrOpen = function (u, name, dir) {
+    window.__wlOpenDir = dir == null ? null : dir;
     fetch(u).then(function (r) { if (!r.ok) throw new Error('fichier introuvable'); return r.arrayBuffer(); }).then(function (b) {
       var i = document.getElementById('file'), dt = new DataTransfer();
       dt.items.add(new File([b], name, { type: 'application/octet-stream' })); i.files = dt.files; i.dispatchEvent(new Event('change'));
@@ -114,7 +123,7 @@
     if (a === 'cd') { S.find = null; setPath(p); return load(); }
     if (a === 'name') { $$('wf-n').value = base(p); return; }
     if (a === 'open') {
-      if (S.side === 'here') { close(); W.setDir(up(p)); S.here = up(p); return window.__wrOpen('/wrfile?p=' + encodeURIComponent(p), base(p)); }
+      if (S.side === 'here') { close(); W.setDir(up(p)); S.here = up(p); return window.__wrOpen('/wrfile?p=' + encodeURIComponent(p), base(p), up(p)); }
       msg('Réception de ' + base(p) + '…');
       return call('rget', p).then(function (r) { close(); window.__wrOpen('/api/inbox?name=' + encodeURIComponent(r.inbox), r.name); }).catch(function (e) { msg(e.message); });
     }
@@ -136,7 +145,9 @@
       var nm = $$('wf-n').value.trim(); if (!nm) return;
       if (S.save.name.match(/\.\w+$/) && !/\.\w+$/.test(nm)) nm += S.save.name.match(/\.\w+$/)[0];
       if ((S.list && S.list.files || []).some(function (f) { return f.name === nm; }) && !confirm('« ' + nm + ' » existe déjà dans ce dossier. Le remplacer ?')) return;
-      var r = W.saveTo(S.here, nm, S.save.data); if (r) close(); else msg('Enregistrement impossible.');
+      var r = W.saveTo(S.here, nm, S.save.data); if (!r) return msg('Enregistrement impossible.');
+      if (/\.xrs$/i.test(nm) && window.__wlSidecar && W.saveText) { var sc = window.__wlSidecar(); if (sc) W.saveText(S.here, nm.replace(/\.xrs$/i, '') + '.photos.json', sc); }   // photos du schéma, à côté du .xrs
+      window.__wlOpenDir = S.here; close();
     };
     if ($$('wf-sh')) $$('wf-sh').onclick = function () { W.share($$('wf-n').value.trim() || S.save.name, S.save.data); };
   }

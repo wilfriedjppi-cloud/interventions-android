@@ -66,6 +66,8 @@ public class WrActivity extends MainActivity {
 
     @Override void handleIntent(Intent i) {
         if (i == null) return;
+        String pd = i.getStringExtra("photoDone");
+        if (pd != null) { i.removeExtra("photoDone"); if (pd.matches("wrphoto-[A-Za-z0-9]+-ok\\.jpg")) { pendingJs = "window.__wrPhotoDone&&window.__wrPhotoDone('/api/inbox?name=" + Uri.encode(pd) + "'," + JSONObject.quote(pd) + ")"; deliverOi(); } return; }
         Uri u = null;
         if (Intent.ACTION_VIEW.equals(i.getAction())) u = i.getData();
         else if (Intent.ACTION_SEND.equals(i.getAction())) u = i.getParcelableExtra(Intent.EXTRA_STREAM);
@@ -227,6 +229,56 @@ public class WrActivity extends MainActivity {
                 runOnUiThread(() -> startActivity(Intent.createChooser(s, "Envoyer " + n)));
                 return "ok";
             } catch (Exception e) { return ""; }
+        }
+
+        /** Texte d'un fichier WillRelais (photos d'un schéma .photos.json) ; "" si absent. */
+        @JavascriptInterface
+        public String readText(String rel) {
+            try { File f = Api.extFile(rel); if (f == null || !f.isFile() || !Api.isWrFile(f.getName()) || f.length() > 80L * 1024 * 1024) return "";
+                return new String(Api.readAll(new java.io.FileInputStream(f)), java.nio.charset.StandardCharsets.UTF_8); } catch (Exception e) { return ""; }
+        }
+
+        /** Photos d'un schéma : fichier compagnon nom.photos.json, à côté du .xrs (recopié sur l'autre appareil avec lui). */
+        @JavascriptInterface
+        public String saveText(String rel, String name, String text) {
+            try {
+                String n = Api.safeName(name); if (!n.toLowerCase().endsWith(".photos.json")) return "";
+                File d = Api.extFile(rel); if (d == null) return ""; if (!d.isDirectory() && !d.mkdirs()) return "";
+                File f = new File(d, n), tmp = new File(d, "." + n + ".part");
+                try (OutputStream o = new FileOutputStream(tmp)) { o.write((text == null ? "" : text).getBytes(java.nio.charset.StandardCharsets.UTF_8)); }
+                if (f.exists()) f.delete(); if (!tmp.renameTo(f)) { tmp.delete(); return ""; }
+                syncSoon(); return Api.relOf(f);
+            } catch (Exception e) { return ""; }
+        }
+
+        File libFile() { File d = Api.extFile(api.wrDefaultDir()); return d == null ? null : new File(d, Api.WR_LIB); }
+
+        /** Bibliothèque de symboles importée : gardée dans le dossier WillRelais (partagé avec l'autre appareil). */
+        @JavascriptInterface
+        public String libLoad() {
+            try { File f = libFile(); if (f == null || !f.isFile()) return ""; return new String(Api.readAll(new java.io.FileInputStream(f)), java.nio.charset.StandardCharsets.UTF_8); } catch (Exception e) { return ""; }
+        }
+
+        @JavascriptInterface
+        public boolean libSave(String text) {
+            try {
+                File f = libFile(); if (f == null) return false; File d = f.getParentFile(); if (!d.isDirectory() && !d.mkdirs()) return false;
+                File tmp = new File(d, ".biblio.part");
+                try (OutputStream o = new FileOutputStream(tmp)) { o.write((text == null ? "[]" : text).getBytes(java.nio.charset.StandardCharsets.UTF_8)); }
+                if (f.exists()) f.delete(); if (!tmp.renameTo(f)) { tmp.delete(); return false; }
+                syncSoon(); return true;
+            } catch (Exception e) { return false; }
+        }
+
+        /** Modifier une photo du schéma dans l'éditeur de photo d'Interventions (recadrer, redresser, améliorer, dessiner). */
+        @JavascriptInterface
+        public void editPhoto(String name, String b64) {
+            try {
+                String n = Api.safeName(name); if (!n.startsWith("wrphoto-")) return;
+                File dir = new File(getCacheDir(), "inbox"); dir.mkdirs();
+                try (OutputStream o = new FileOutputStream(new File(dir, n))) { o.write(android.util.Base64.decode(b64 == null ? "" : b64, android.util.Base64.DEFAULT)); }
+                runOnUiThread(() -> startActivity(new Intent(WrActivity.this, MainActivity.class).setAction(ACT_GO).putExtra("editPhoto", n)));
+            } catch (Exception e) { runOnUiThread(() -> Toast.makeText(WrActivity.this, "Photo : " + e.getMessage(), Toast.LENGTH_LONG).show()); }
         }
 
         /** « PDF / Imprimer » : impression Android (choix « Enregistrer au format PDF » possible). */

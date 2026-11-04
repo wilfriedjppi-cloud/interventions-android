@@ -1,5 +1,5 @@
-<!doctype html><!-- interventions-sig: MEYCIQCvnjAAr+iQQI24ByY3q51ATGBExNN62jicXxx3PvnM+QIhAORiU6mBbjWGOJwR0qDmspYzDqzhoAnuhvDqiGc3CYE2 -->
-<!-- willrelais-version: 8 -->
+<!doctype html><!-- interventions-sig: MEYCIQCsoEVaxddzqLucxHeljdY66QR2dZUlK17fbhZNUf0hhAIhANxdpbcYqW9gpWLD4oFpDwFtSeLt0cq65QOrVlqv6LrA -->
+<!-- willrelais-version: 9 -->
 <html lang="fr">
 <head>
 <meta charset="utf-8">
@@ -162,8 +162,8 @@ const esc=(s)=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g
 const FS=0.92;
 function txt(x,y,t,size,al,bold,color,key,rot=0){
   if(t===''||t==null) return '';
-  const anchor=al==2?'end':(al==6)?'middle':'start';
-  const fs=(size||300)*FS; const by=num(y)+(size||300)*0.95;
+  al=num(al); const ha=al&6, va=al&24; const anchor=ha===2?'end':ha===6?'middle':'start';
+  const fs=(size||300)*FS; const by=va===24?num(y):va===8?num(y)-(size||300)*0.22:num(y)+(size||300)*0.95;
   return `<text x="${x}" y="${by}" font-size="${fs}" font-family="Arial,Helvetica,sans-serif" text-anchor="${anchor}"${bold?' font-weight="700"':''} fill="${color||'#000'}"${key?` data-k="${key}"`:''}${rot?` transform="rotate(${-rot} ${x} ${by})"`:''}>${esc(t)}</text>`;
 }
 function arcPath(cx,cy,r,a0,a1){
@@ -182,13 +182,45 @@ function symBBox(s){
   if(x0>x1){const p=F(s.blocks.Autre.lines[0]);add(num(p[0])-200,num(p[1])-200);add(num(p[0])+200,num(p[1])+200);}
   return [x0,y0,x1,y1];
 }
+/* traits : épaisseur 0 = trait fin (comme WinRelais), styles de trait Delphi (1 tirets, 2 points, 3 trait-point, 4 trait-point-point, 5 invisible) */
+const PEN={1:'120 60',2:'30 50',3:'120 50 30 50',4:'120 40 30 40 30 40'};
+const swd=(w)=>{w=num(w,0);return w>0?w:12;};
+const dsh=(st)=>{const d=PEN[num(st)];return d?` stroke-dasharray="${d}"`:'';};
+/* broche : la ligne dessinée part du point de connexion vers le symbole, sur sa longueur (champ 20, 4 mm par défaut) */
+function pinEnd(f){const x=num(f[1]),y=num(f[2]),dx=num(f[3])-x,dy=num(f[4])-y,l=Math.hypot(dx,dy),L=num(f[20],400);if(!l||L<=0)return [x,y];const k=Math.min(L,l)/l;return [Math.round(x+dx*k),Math.round(y+dy*k)];}
+const pinSize=(f)=>num(f[13],0)||num(f[8],200)||200;
+function connMark(x,y){return `<circle cx="${x}" cy="${y}" r="42" fill="#fff" stroke="#000" stroke-width="10"/><circle cx="${x}" cy="${y}" r="14" fill="#000"/>`;}
+function symG(blocks,o={}){
+  const g=[];
+  for(const l of (blocks.Contour?.lines||[])){if(!l)continue;const f=F(l);if(num(f[5])===5)continue;g.push(`<line x1="${f[0]}" y1="${f[1]}" x2="${f[2]}" y2="${f[3]}" stroke="${col(f[6])}" stroke-width="${o.thumb?Math.max(swd(f[4]),20):swd(f[4])}"${dsh(f[5])} stroke-linecap="round"/>`);}
+  for(const l of (blocks.Arc?.lines||[])){if(!l)continue;const f=F(l);g.push(`<path d="${arcPath(num(f[0]),num(f[1]),num(f[2]),num(f[3]),num(f[4]))}" fill="none" stroke="${col(f[6])}" stroke-width="${o.thumb?Math.max(swd(f[5]),20):swd(f[5])}"${dsh(f[7])}/>`);}
+  for(const l of (blocks.ZoneDessin?.lines||[])){if(!l)continue;const f=F(l);const p=[];for(let i=6;i+1<f.length;i+=2)if(f[i]!==''&&f[i+1]!=='')p.push(f[i]+','+f[i+1]);if(p.length>2)g.push(`<polygon points="${p.join(' ')}" fill="none" stroke="#000" stroke-width="${o.thumb?20:12}"/>`);}
+  const shp=F(blocks.Autre?.lines?.[1]||'')[5]==='1';   // en-tête du symbole, champ 5 : n° de bornes affichés
+  for(const l of (blocks.Broche?.lines||[])){if(!l)continue;const f=F(l);const e=pinEnd(f);
+    g.push(`<line x1="${f[1]}" y1="${f[2]}" x2="${e[0]}" y2="${e[1]}" stroke="#000" stroke-width="${o.thumb?20:12}" stroke-linecap="round"/>`);
+    if(!o.thumb){ g.push(connMark(num(f[1]),num(f[2]))); if(shp&&f[0].trim()!==''&&o.labels!==false) g.push(txt(f[5],f[6],f[0],pinSize(f),0,0,'#000')); } }
+  if(!o.thumb) (blocks.MDessin?.lines||[]).forEach(l=>{ if(!l)return; const f=F(l); g.push(txt(num(f[1]),num(f[2]),f[5],num(f[4],400),6,0,'#000')); });   // textes dessinés du symbole (ex. « M » « 3 ~ » d'un moteur)
+  if(!o.thumb) (blocks.Autre?.lines||[]).slice(2).forEach(l=>{ if(!l)return; const f=F(l); if(f[3]!=='1')return; g.push(txt(f[1],f[2],f[0],num(f[6],300),num(f[4]),0,'#000','',num(f[7])));});
+  return g;
+}
 function symFolio(s){ const h=F(s.blocks.Autre.lines[1]); return num(h[8]); }
 function folioSize(M,n){ const f=M.folios[n]; if(!f) return [29700,21000]; const a=F(f.blocks.Autre.lines[0]); return [num(a[0],29700),num(a[1],21000)]; }
 function folioTitle(M,n){ const f=M.folios[n]; if(!f||!f.blocks.CartoucheTexte) return ''; for(const l of f.blocks.CartoucheTexte.lines){const a=F(l); if(a[3]==='TITRE FOLIO') return a[2];} return ''; }
 
+/* renvoi : origine = flèche partant du point (texte après la pointe) ; destination = flèche arrivant au point (texte avant) */
+function renvoi(x,y,code,t,sz,src){
+  const D={0:[0,1],1:[0,1],2:[1,0],3:[-1,0],4:[0,-1]}[code]||[1,0], A=300, Wd=130, px=-D[1], py=D[0];
+  const tip=src?[x+D[0]*A,y+D[1]*A]:[x,y], tail=src?[x,y]:[x-D[0]*A,y-D[1]*A], nt=[tail[0]+D[0]*A*0.3,tail[1]+D[1]*A*0.3];
+  let o=`<polygon points="${tip[0]},${tip[1]} ${tail[0]+px*Wd},${tail[1]+py*Wd} ${nt[0]},${nt[1]} ${tail[0]-px*Wd},${tail[1]-py*Wd}" fill="#000"/>`;
+  if(t){ const g=60;
+    if(D[1]===0){ const ax=src?tip[0]+D[0]*g:tail[0]-D[0]*g; const right=(D[0]>0)===src; o+=txt(ax,y-sz/2,t,sz,right?0:2,0,'#000'); }
+    else { const ay=src?tip[1]+D[1]*g:tail[1]-D[1]*g; const below=(D[1]>0)===src; o+=txt(x,below?ay:ay-sz,t,sz,6,0,'#000'); } }
+  return o;
+}
 function folioSVG(M,n,opts={}){
   const [W,H]=folioSize(M,n); const sel=opts.sel||null; const out=[];
   out.push(`<rect x="0" y="0" width="${W}" height="${H}" fill="#fff"/>`);
+  if(opts.edit&&window.__wlGrid) out.push(window.__wlGrid(W,H));
   const fo=M.folios[n];
   if(fo){
     const A0=F(fo.blocks.Autre.lines[0]); const m0=num(F(fo.blocks.Autre.lines[0])[13],800)||800;
@@ -211,16 +243,14 @@ function folioSVG(M,n,opts={}){
     else out.push(`<line x1="${f[0]}" y1="${f[1]}" x2="${f[2]}" y2="${f[3]}" ${st} data-k="${k}"/>`);
   });
   (M.g.ZoneDessin?.lines||[]).forEach(l=>{ if(!l)return; const f=F(l); if(num(f[1])!==n)return; const p=[]; for(let i=6;i+1<f.length;i+=2) if(f[i]!==''&&f[i+1]!=='') p.push(f[i]+','+f[i+1]); if(p.length>2) out.push(`<polygon points="${p.join(' ')}" fill="none" stroke="#000" stroke-width="20" stroke-dasharray="100 60"/>`); });
+  if(window.__wlPhotos) out.push(window.__wlPhotos(M,n,opts));
   // symboles
   M.syms.forEach((s,si)=>{
     if(symFolio(s)!==n) return;
     const k=`s:${si}`; const bb=symBBox(s); const g=[];
     g.push(`<g data-k="${k}">`);
     g.push(`<rect x="${bb[0]-60}" y="${bb[1]-60}" width="${bb[2]-bb[0]+120}" height="${bb[3]-bb[1]+120}" fill="transparent"/>`);
-    for(const l of (s.blocks.Contour?.lines||[])){if(!l)continue;const f=F(l);g.push(`<line x1="${f[0]}" y1="${f[1]}" x2="${f[2]}" y2="${f[3]}" stroke="${col(f[6])}" stroke-width="${num(f[4],20)}" stroke-linecap="round"/>`);}
-    for(const l of (s.blocks.Arc?.lines||[])){if(!l)continue;const f=F(l);g.push(`<path d="${arcPath(num(f[0]),num(f[1]),num(f[2]),num(f[3]),num(f[4]))}" fill="none" stroke="${col(f[6])}" stroke-width="${num(f[5],20)}"/>`);}
-    for(const l of (s.blocks.Broche?.lines||[])){if(!l)continue;const f=F(l);g.push(`<line x1="${f[1]}" y1="${f[2]}" x2="${f[3]}" y2="${f[4]}" stroke="#000" stroke-width="20" stroke-linecap="round"/><rect x="${num(f[1])-35}" y="${num(f[2])-35}" width="70" height="70" fill="#000"/>`);}
-    s.blocks.Autre.lines.slice(2).forEach(l=>{ if(!l)return; const f=F(l); if(f[3]!=='1')return; g.push(txt(f[1],f[2],f[0],num(f[6],300),num(f[4]),0,'#000'));});
+    g.push(...symG(s.blocks));
     g.push('</g>');
     out.push(g.join(''));
   });
@@ -234,8 +264,8 @@ function folioSVG(M,n,opts={}){
   (M.g.MDessin?.lines||[]).forEach(l=>{ if(!l)return; const f=F(l); if(num(f[0])!==n)return; out.push(txt(num(f[1]),num(f[2]),f[5],num(f[4],400),6,0,'#000'));});
   (M.g.Numero?.lines||[]).forEach((l,i)=>{ if(!l)return; const f=F(l); if(num(f[3])!==n)return; out.push(txt(f[0],f[1],f[2],num(f[6],300),num(f[4]),0,'#000',opts.edit?`n:${i}`:''));});
   (M.g.RenvoiF?.lines||[]).forEach(l=>{ if(!l)return; const f=F(l);
-    if(num(f[0])===n) out.push(txt(num(f[2]),num(f[3]),f[10],num(f[16],300),0,0,'#000'));
-    if(num(f[1])===n) out.push(txt(num(f[4]),num(f[5]),f[11],num(f[16],300),0,0,'#000'));});
+    if(num(f[0])===n) out.push(renvoi(num(f[2]),num(f[3]),num(f[8]),f[10],num(f[15],300)||300,true));
+    if(num(f[1])===n) out.push(renvoi(num(f[4]),num(f[5]),num(f[9]),f[11],num(f[15],300)||300,false));});
   (M.g.Texte?.lines||[]).forEach((l,i)=>{ if(!l)return; const f=F(l); if(num(f[4])!==n)return; out.push(txt(f[0],f[1],f[2],num(f[7],300),num(f[5]),num(f[10]),'#000',opts.edit?`t:${i}`:'',num(f[8])));});
   return {W,H,body:out.join('')};
 }
@@ -243,10 +273,14 @@ function folioSVG(M,n,opts={}){
 /* ====================== État et UI ====================== */
 const $=(id)=>document.getElementById(id);
 const svg=$('svg'), stage=$('stage');
-let M=null, fname='schema.xrs', cur=0, sel=null, tool='sel', view={x:0,y:0,w:29700,h:21000}, undoStack=[], dirty=false, pending=null;
+let M=null, fname='schema.xrs', cur=0, sel=null, tool='sel', view={x:0,y:0,w:29700,h:21000}, undoStack=[], redoStack=[], dirty=false, pending=null;
 
-function snapshot(){ undoStack.push(JSON.stringify(M.doc.blocks)); if(undoStack.length>60) undoStack.shift(); $('bUndo').disabled=false; dirty=true; }
-function undo(){ if(!undoStack.length) return; M.doc.blocks=JSON.parse(undoStack.pop()); M=buildModel(M.doc); if(!undoStack.length) $('bUndo').disabled=true; sel=null; redraw(); }
+function docState(){ return JSON.stringify({b:M.doc.blocks,p:M.doc.photos||[]}); }
+function setDocState(t){ const o=JSON.parse(t); const d=M.doc; if(Array.isArray(o)){d.blocks=o;} else {d.blocks=o.b; d.photos=o.p||[];} M=buildModel(d); }
+function undoUi(){ $('bUndo').disabled=!undoStack.length; const r=$('bRedo'); if(r) r.disabled=!redoStack.length; const a=$('fUndo'), b=$('fRedo'); if(a) a.disabled=!undoStack.length; if(b) b.disabled=!redoStack.length; }
+function snapshot(){ undoStack.push(docState()); if(undoStack.length>100) undoStack.shift(); redoStack=[]; dirty=true; undoUi(); }
+function undo(){ if(!M||!undoStack.length) return; redoStack.push(docState()); setDocState(undoStack.pop()); sel=null; undoUi(); redraw(); }
+function redo(){ if(!M||!redoStack.length) return; undoStack.push(docState()); setDocState(redoStack.pop()); sel=null; undoUi(); redraw(); }
 function setView(){ svg.setAttribute('viewBox',`${view.x} ${view.y} ${view.w} ${view.h}`); }
 function fit(){
   const [W,H]=folioSize(M,cur); const r=stage.getBoundingClientRect(); const ar=r.width/Math.max(r.height,1);
@@ -265,9 +299,10 @@ function selOverlay(){
   const k=sel.split(':'); let o='';
   const box=(x0,y0,x1,y1)=>`<rect x="${x0-40}" y="${y0-40}" width="${x1-x0+80}" height="${y1-y0+80}" fill="none" stroke="#2563eb" stroke-width="30" stroke-dasharray="120 60" pointer-events="none"/>`;
   if(k[0]==='s'){const bb=symBBox(M.syms[+k[1]]);o=box(...bb);}
-  else if(k[0]==='w'){const f=F(M.g.FilBus.lines[+k[1]]);o=`<line x1="${f[0]}" y1="${f[1]}" x2="${f[2]}" y2="${f[3]}" stroke="#2563eb" stroke-opacity=".45" stroke-width="140" pointer-events="none"/>`+
+  else if(k[0]==='w'){const f=F(M.g.FilBus.lines[+k[1]]);o=equip(+k[1]).filter(i=>i!==+k[1]).map(i=>{const q=F(M.g.FilBus.lines[i]);return `<line x1="${q[0]}" y1="${q[1]}" x2="${q[2]}" y2="${q[3]}" stroke="#f59e0b" stroke-opacity=".35" stroke-width="110" pointer-events="none"/>`;}).join('')+`<line x1="${f[0]}" y1="${f[1]}" x2="${f[2]}" y2="${f[3]}" stroke="#2563eb" stroke-opacity=".45" stroke-width="140" pointer-events="none"/>`+
       [0,2].map(i=>`<circle cx="${f[i]}" cy="${f[i+1]}" r="110" fill="#2563eb" stroke="#fff" stroke-width="20" data-h="${i}"/>`).join('');}
   else if(k[0]==='j'){const f=F(M.g.Jonction.lines[+k[1]]);o=`<circle cx="${f[0]}" cy="${f[1]}" r="140" fill="none" stroke="#2563eb" stroke-width="30"/>`;}
+  else if(k[0]==='p'&&window.__wlPhotoSel){o=window.__wlPhotoSel(+k[1]);}
   else { const ln=lineOf(sel); if(ln){const f=F(ln); const sz=num(f[k[0]==='n'?6:7],300); o=`<circle cx="${f[0]}" cy="${f[1]}" r="90" fill="#2563eb"/>`;} }
   return o;
 }
@@ -293,6 +328,17 @@ function setLine(key,fields){
     case 'ct': M.folios[+k[1]].blocks.CartoucheTexte.lines[+k[2]]=s;break;
   }
 }
+/* équipotentiel d'un fil */
+function onSeg(px,py,f){const x1=num(f[0]),y1=num(f[1]),x2=num(f[2]),y2=num(f[3]);if(px<Math.min(x1,x2)-2||px>Math.max(x1,x2)+2||py<Math.min(y1,y2)-2||py>Math.max(y1,y2)+2)return false;const cr=(x2-x1)*(py-y1)-(y2-y1)*(px-x1);return Math.abs(cr)<=2*Math.hypot(x2-x1,y2-y1);}
+function equip(i0){
+  const L=M.g.FilBus?.lines||[]; const f0=L[i0]?F(L[i0]):null; if(!f0) return [i0]; const fo=num(f0[4]);
+  const W=[]; L.forEach((l,i)=>{if(!l)return;const f=F(l);if(num(f[4])===fo)W.push([i,f]);});
+  const done=new Set([i0]), q=[i0];
+  while(q.length){ const a=F(L[q.pop()]); const pa=[[num(a[0]),num(a[1])],[num(a[2]),num(a[3])]];
+    for(const [i,f] of W){ if(done.has(i))continue; const pb=[[num(f[0]),num(f[1])],[num(f[2]),num(f[3])]];
+      if(pa.some(p=>onSeg(p[0],p[1],f))||pb.some(p=>onSeg(p[0],p[1],a))){done.add(i);q.push(i);} } }
+  return [...done];
+}
 /* tabs */
 function buildTabs(){
   const t=$('tabs'); t.innerHTML='';
@@ -301,7 +347,7 @@ function buildTabs(){
 }
 function updateTools(){
   document.querySelectorAll('#tools [data-tool]').forEach(b=>b.classList.toggle('on',b.dataset.tool===tool));
-  $('bDel').disabled=!sel||/^ct:|^ds:/.test(sel)&&false; $('bDup').disabled=!(sel&&/^(s|w|t|n|j):/.test(sel));
+  $('bDel').disabled=!sel||/^ct:|^ds:/.test(sel)&&false; $('bDup').disabled=!(sel&&/^(s|w|t|n|j|p):/.test(sel));
   $('status').textContent=(M?`Folio ${cur+1}/${M.folios.length}`:'')+(tool==='sym'&&armed?` — touche pour placer « ${armed.name} »`:tool!=='sel'?` — outil : ${tool}`:'')+(pending?' — touche le 2e point':'');
 }
 document.querySelectorAll('#tools [data-tool]').forEach(b=>b.onclick=()=>{tool=b.dataset.tool;pending=null;if(tool!=='sel')sel=null;redraw();});
@@ -311,32 +357,92 @@ function row(label,html){return `<div class="row"><label>${label}</label>${html}
 function renderInsp(){
   const el=$('insp'); if(!sel||!M){el.style.display='none';return;}
   const k=sel.split(':'); let h='';
+  const ins=(a,v,w)=>`<input type="${w?'number':'text'}" ${a} value="${esc(v)}"${w?` style="flex:0 0 ${w}px"`:''}>`;
   if(k[0]==='s'){
     const s=M.syms[+k[1]]; const hd=F(s.blocks.Autre.lines[1]);
     h=`<div style="display:flex;gap:10px;align-items:center">${symThumb(s.blocks,80)}<h4 style="margin:0">Symbole — ${esc(hd[1])} / ${esc(hd[2])}</h4></div>`;
-    s.blocks.Autre.lines.slice(2).forEach((l,i)=>{ if(!l)return; const f=F(l); if(i>1&&f[0]===''&&f[3]!=='1')return; const lab=i===0?'Repère':i===1?'Valeur':'Champ '+(i+1);
-      h+=row(lab,`<input type="text" data-sf="${i+2}" value="${esc(f[0])}"><input type="checkbox" data-sv="${i+2}" ${f[3]==='1'?'checked':''} title="Afficher" style="width:22px;height:22px">`);});
+    h+=`<h5 class="ih">Textes <small>(texte · taille · affiché)</small></h5>`;
+    s.blocks.Autre.lines.slice(2).forEach((l,i)=>{ if(!l)return; const f=F(l); const lab=i===0?'Repère':i===1?'Valeur':'Texte '+(i+1);
+      h+=row(lab,ins(`data-sf="${i+2}"`,f[0])+ins(`data-ss="${i+2}"`,f[6]||300,64)+`<input type="checkbox" data-sv="${i+2}" ${f[3]==='1'?'checked':''} title="Afficher" style="width:22px;height:22px;flex:none">`);});
+    h+=`<h5 class="ih">Dénomination</h5>`+row('Nom',ins('data-hd="2"',hd[2]))+row('Famille',ins('data-hd="1"',hd[1]));
+    const rc=s.blocks.RefConstructeur; if(rc&&rc.lines[0]!=null){ const r=F(rc.lines[0]); h+=row('Désignation',ins('data-rc="0"',r[0]||''))+row('Référence',ins('data-rc="1"',r[1]||''))+row('Code article',ins('data-rc="2"',r[2]||'')); }
+    const pins=(s.blocks.Broche?.lines||[]);
+    if(pins.some(Boolean)){ h+=`<h5 class="ih">Connexions <small>(n° ou texte · position · taille)</small></h5>`+row('',`<label style="flex:1;display:flex;gap:8px;align-items:center;color:#111"><input type="checkbox" id="ishp" ${hd[5]==='1'?'checked':''} style="width:22px;height:22px"> Afficher les n° de bornes</label>`);
+      pins.forEach((l,i)=>{ if(!l)return; const f=F(l); const sd=pinSide(f);
+        h+=row('Borne '+(i+1),ins(`data-pn="${i}"`,f[0])+`<select data-pp="${i}" style="flex:0 0 92px">${[['','—'],['h','en haut'],['b','en bas'],['g','à gauche'],['d','à droite']].map(o=>`<option value="${o[0]}"${o[0]===sd?' selected':''}>${o[1]}</option>`).join('')}</select>`+ins(`data-ps="${i}"`,pinSize(f),58)); }); }
+    h+=`<h5 class="ih">Taille du symbole</h5><div class="row"><button data-sc="0.8">− 20 %</button><button data-sc="0.9">− 10 %</button><button data-sc="1.1">+ 10 %</button><button data-sc="1.25">+ 25 %</button></div>`;
   } else if(k[0]==='w'){
-    const f=F(lineOf(sel)); h=`<h4>Fil</h4>`+
+    const f=F(lineOf(sel)); const eq=equip(+k[1]);
+    h=`<h4>Fil</h4>`+
      row('Nom / bus',`<input type="text" data-f="9" value="${esc(f[9])}">`)+
      row('Épaisseur',`<input type="number" data-f="6" value="${f[6]}">`)+
      row('Couleur',`<input type="color" data-c="7" value="${col(f[7])}" style="height:38px;flex:1">`)+
+     (eq.length>1?row('',`<label style="flex:1;display:flex;gap:8px;align-items:center;color:#111"><input type="checkbox" id="ieq" checked style="width:22px;height:22px"> Tout l'équipotentiel (${eq.length} fils, en orange)</label>`):'')+
      row('Début x,y',`<input type="number" data-f="0" value="${f[0]}"><input type="number" data-f="1" value="${f[1]}">`)+
      row('Fin x,y',`<input type="number" data-f="2" value="${f[2]}"><input type="number" data-f="3" value="${f[3]}">`);
   } else if(k[0]==='j'){
     const f=F(lineOf(sel)); h=`<h4>Jonction</h4>`+row('x,y',`<input type="number" data-f="0" value="${f[0]}"><input type="number" data-f="1" value="${f[1]}">`);
   } else if(k[0]==='ds'){
     const f=F(lineOf(sel)); h=`<h4>Dessin</h4>`+row('Point 1',`<input type="number" data-f="0" value="${f[0]}"><input type="number" data-f="1" value="${f[1]}">`)+row('Point 2',`<input type="number" data-f="2" value="${f[2]}"><input type="number" data-f="3" value="${f[3]}">`);
+  } else if(k[0]==='p'){
+    h=window.__wlPhotoInsp?window.__wlPhotoInsp(+k[1]):'';
   } else { // t, n, ct
     const f=F(lineOf(sel)); const si=k[0]==='n'?6:7;
     h=`<h4>${k[0]==='n'?'N° de fil':k[0]==='ct'?'Cartouche':'Texte'}</h4>`+row('Texte',`<input type="text" data-f="2" value="${esc(f[2])}">`)+
       row('Taille',`<input type="number" data-f="${si}" value="${f[si]}">`)+row('Position x,y',`<input type="number" data-f="0" value="${f[0]}"><input type="number" data-f="1" value="${f[1]}">`);
   }
   el.innerHTML=h; el.style.display='block';
-  el.querySelectorAll('[data-f]').forEach(i=>i.onchange=()=>{snapshot();const f=F(lineOf(sel));f[+i.dataset.f]=(i.type==='text'?clean(i.value):i.value);setLine(sel,f);redraw();});
-  el.querySelectorAll('[data-c]').forEach(i=>i.onchange=()=>{snapshot();const f=F(lineOf(sel));const v=i.value;f[+i.dataset.c]=String(parseInt(v.slice(5,7)+v.slice(3,5)+v.slice(1,3),16));setLine(sel,f);redraw();});
-  el.querySelectorAll('[data-sf]').forEach(i=>i.onchange=()=>{snapshot();const s=M.syms[+k[1]];const idx=+i.dataset.sf;const f=F(s.blocks.Autre.lines[idx]);f[0]=clean(i.value);s.blocks.Autre.lines[idx]=J(f);redraw();});
-  el.querySelectorAll('[data-sv]').forEach(i=>i.onchange=()=>{snapshot();const s=M.syms[+k[1]];const idx=+i.dataset.sv;const f=F(s.blocks.Autre.lines[idx]);f[3]=i.checked?'1':'0';s.blocks.Autre.lines[idx]=J(f);redraw();});
+  const eqOn=()=>{const c=el.querySelector('#ieq');return !!(c&&c.checked);};
+  const wires=()=>k[0]==='w'&&eqOn()?equip(+k[1]):[+k[1]];
+  el.querySelectorAll('[data-f]').forEach(i=>i.onchange=()=>{snapshot();const idx=+i.dataset.f;const v=(i.type==='text'?clean(i.value):i.value);
+    if(k[0]==='w'&&(idx===6||idx===9)){ for(const w of wires()){const f=F(M.g.FilBus.lines[w]);f[idx]=v;M.g.FilBus.lines[w]=J(f);} }
+    else {const f=F(lineOf(sel));f[idx]=v;setLine(sel,f);} redraw();});
+  el.querySelectorAll('[data-c]').forEach(i=>i.onchange=()=>{snapshot();const v=i.value;const c=String(parseInt(v.slice(5,7)+v.slice(3,5)+v.slice(1,3),16));
+    for(const w of wires()){const f=F(M.g.FilBus.lines[w]);f[+i.dataset.c]=c;M.g.FilBus.lines[w]=J(f);} redraw();});
+  if(k[0]!=='s'){ if(k[0]==='p'&&window.__wlPhotoInspBind) window.__wlPhotoInspBind(el,+k[1]); return; }
+  const s=M.syms[+k[1]];
+  const ed=(blk,idx,fn)=>{snapshot();const f=F(blk.lines[idx]);fn(f);blk.lines[idx]=J(f);redraw();};
+  el.querySelectorAll('[data-sf]').forEach(i=>i.onchange=()=>ed(s.blocks.Autre,+i.dataset.sf,f=>f[0]=clean(i.value)));
+  el.querySelectorAll('[data-ss]').forEach(i=>i.onchange=()=>ed(s.blocks.Autre,+i.dataset.ss,f=>f[6]=String(Math.max(50,Math.round(num(i.value,300))))));
+  el.querySelectorAll('[data-sv]').forEach(i=>i.onchange=()=>ed(s.blocks.Autre,+i.dataset.sv,f=>f[3]=i.checked?'1':'0'));
+  el.querySelectorAll('[data-hd]').forEach(i=>i.onchange=()=>ed(s.blocks.Autre,1,f=>f[+i.dataset.hd]=clean(i.value)));
+  el.querySelectorAll('[data-rc]').forEach(i=>i.onchange=()=>ed(s.blocks.RefConstructeur,0,f=>{while(f.length<5)f.push('');f[+i.dataset.rc]=clean(i.value);}));
+  const shpOn=()=>{const a=s.blocks.Autre,f=F(a.lines[1]);if(f[5]!=='1'){f[5]='1';a.lines[1]=J(f);}};
+  const ck=el.querySelector('#ishp'); if(ck) ck.onchange=()=>ed(s.blocks.Autre,1,f=>f[5]=ck.checked?'1':'0');
+  el.querySelectorAll('[data-pn]').forEach(i=>i.onchange=()=>ed(s.blocks.Broche,+i.dataset.pn,f=>{const sd=pinSide(f);f[0]=clean(i.value);if(sd)pinPlace(f,sd);shpOn();}));
+  el.querySelectorAll('[data-pp]').forEach(i=>i.onchange=()=>{ if(i.value) ed(s.blocks.Broche,+i.dataset.pp,f=>{pinPlace(f,i.value);shpOn();}); });
+  el.querySelectorAll('[data-ps]').forEach(i=>i.onchange=()=>ed(s.blocks.Broche,+i.dataset.ps,f=>{const sd=pinSide(f);f[13]=String(Math.max(50,Math.round(num(i.value,200))));if(sd)pinPlace(f,sd);}));
+  el.querySelectorAll('[data-sc]').forEach(b=>b.onclick=()=>{snapshot();scaleSym(+k[1],num(b.dataset.sc,1));redraw();});
+}
+/* n° de borne : position autour de la connexion (en haut, en bas : au-dessus / au-dessous du point ; à gauche, à droite : le long du trait) */
+function pinBox(f){ const sz=pinSize(f); return {sz,w:Math.max(1,String(f[0]).length)*sz*0.62}; }
+function pinPlace(f,side){
+  const px=num(f[1]),py=num(f[2]),e=pinEnd(f),mx=(px+e[0])/2,my=(py+e[1])/2,{sz,w}=pinBox(f),g=60; let x,y;
+  if(side==='h'){x=px-w/2;y=py-g-sz;} else if(side==='b'){x=px-w/2;y=py+g;} else if(side==='g'){x=mx-g-w;y=my-sz/2;} else {x=mx+g;y=my-sz/2;}
+  f[5]=String(Math.round(x/5)*5); f[6]=String(Math.round(y/5)*5);
+}
+function pinSide(f){
+  const px=num(f[1]),py=num(f[2]),e=pinEnd(f),mx=(px+e[0])/2,my=(py+e[1])/2,{sz,w}=pinBox(f),cx=num(f[5])+w/2,cy=num(f[6])+sz/2;
+  const c={h:[px,py-60-sz/2],b:[px,py+60+sz/2],g:[mx-60-w/2,my],d:[mx+60+w/2,my]}; let best='',bd=1e9;
+  for(const k in c){const d=Math.hypot(cx-c[k][0],cy-c[k][1]); if(d<bd){bd=d;best=k;}} return bd<Math.max(120,sz)?best:'';
+}
+/* taille du symbole : homothétie autour de son origine, les fils reliés suivent */
+function scaleSym(si,k){
+  const s=M.syms[si]; const o=F(s.blocks.Autre.lines[0]); const ox=num(o[0]),oy=num(o[1]);
+  const T=(v,c)=>String(Math.round((c+(num(v)-c)*k)/5)*5);
+  const before=symPins(s);
+  const map=(b,fn)=>{ if(!b) return; b.lines=b.lines.map(l=>{ if(!l) return l; const f=F(l); fn(f); return J(f); }); };
+  map(s.blocks.Contour,f=>{f[0]=T(f[0],ox);f[1]=T(f[1],oy);f[2]=T(f[2],ox);f[3]=T(f[3],oy);});
+  map(s.blocks.Arc,f=>{f[0]=T(f[0],ox);f[1]=T(f[1],oy);f[2]=String(Math.max(5,Math.round(num(f[2])*k)));});
+  map(s.blocks.Broche,f=>{for(const i of [1,3,5])f[i]=T(f[i],ox);for(const i of [2,4,6])f[i]=T(f[i],oy);f[20]=String(Math.round(num(f[20],400)*k));});
+  map(s.blocks.RefCroise,f=>{f[5]=T(f[5],ox);f[6]=T(f[6],oy);});
+  map(s.blocks.MDessin,f=>{f[1]=T(f[1],ox);f[2]=T(f[2],oy);f[4]=String(Math.max(50,Math.round(num(f[4],400)*k)));});
+  map(s.blocks.ZoneDessin,f=>{for(let i=6;i+1<f.length;i+=2){if(f[i]!==''&&f[i+1]!==''){f[i]=T(f[i],ox);f[i+1]=T(f[i+1],oy);}}});
+  s.blocks.Autre.lines=s.blocks.Autre.lines.map((l,i)=>{ if(!l||i<2) return l; const f=F(l); f[1]=T(f[1],ox); f[2]=T(f[2],oy); return J(f); });
+  const after=symPins(s);
+  if(follow) before.forEach((p,i)=>{ const q=after[i]; if(!q) return; const dx=q[0]-p[0], dy=q[1]-p[1]; if(!dx&&!dy) return;
+    const B=M.g.FilBus; if(!B) return; B.lines=B.lines.map(l=>{ if(!l) return l; const f=F(l); if(num(f[4])!==cur) return l; let ch=false;
+      for(const j of [0,2]) if(num(f[j])===p[0]&&num(f[j+1])===p[1]){f[j]=String(q[0]);f[j+1]=String(q[1]);ch=true;} return ch?J(f):l; }); });
 }
 
 /* géométrie écran <-> folio */
@@ -352,7 +458,7 @@ function shiftSym(s,dx,dy){
   const sh=(b,idxs)=>{if(!b)return;b.lines=b.lines.map(l=>{if(!l)return l;const f=F(l);idxs.forEach(i=>{if(f[i]!==undefined&&f[i]!=='')f[i]=String(Math.round(num(f[i])+(i%2===(idxs[0]%2)?dx:dy)));});return J(f);});};
   const a=s.blocks.Autre; a.lines=a.lines.map((l,i)=>{if(!l)return l;const f=F(l);if(i===0){f[0]=String(num(f[0])+dx);f[1]=String(num(f[1])+dy);}else if(i>=2){f[1]=String(num(f[1])+dx);f[2]=String(num(f[2])+dy);}return J(f);});
   const mv=(b,pairs)=>{if(!b)return;b.lines=b.lines.map(l=>{if(!l)return l;const f=F(l);for(const p of pairs){if(f[p]!==undefined&&f[p]!==''){f[p]=String(num(f[p])+dx);f[p+1]=String(num(f[p+1])+dy);}}return J(f);});};
-  mv(s.blocks.Contour,[0,2]); mv(s.blocks.Arc,[0]); mv(s.blocks.Broche,[1,3,5]);
+  mv(s.blocks.Contour,[0,2]); mv(s.blocks.Arc,[0]); mv(s.blocks.Broche,[1,3,5]); mv(s.blocks.MDessin,[1]); mv(s.blocks.ZoneDessin,[6,8,10,12,14,16,18,20]);
   if(s.blocks.RefCroise) s.blocks.RefCroise.lines=s.blocks.RefCroise.lines.map(l=>{if(!l)return l;const f=F(l);f[5]=String(num(f[5])+dx);f[6]=String(num(f[6])+dy);return J(f);});
 }
 function shiftLine(key,dx,dy){
@@ -366,12 +472,15 @@ function shiftLine(key,dx,dy){
 const ptrs=new Map(); let drag=null, pinch=null, base=null;
 svg.addEventListener('pointerdown',e=>{
   if(!M) return; svg.setPointerCapture(e.pointerId); ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
-  if(ptrs.size===2){drag=null;const [a,b]=[...ptrs.values()];pinch={d:Math.hypot(a.x-b.x,a.y-b.y),v:{...view},cx:(a.x+b.x)/2,cy:(a.y+b.y)/2};return;}
+  if(ptrs.size===2){if(drag&&drag.tm)clearTimeout(drag.tm);drag=null;const [a,b]=[...ptrs.values()];pinch={d:Math.hypot(a.x-b.x,a.y-b.y),v:{...view},cx:(a.x+b.x)/2,cy:(a.y+b.y)/2};return;}
   const t=e.target.closest('[data-k]'); const h=e.target.dataset?.h;
   const p=toDoc(e);
   if(tool!=='sel'){drag={type:'tool',sx:e.clientX,sy:e.clientY,moved:false,p};return;}
-  if(h!==undefined&&sel){drag={type:'handle',h:+h,moved:false,snap:false,sx:e.clientX,sy:e.clientY};return;}
-  if(t){const k=t.dataset.k; if(k!==sel){sel=k;redraw();} drag={type:'item',sx:e.clientX,sy:e.clientY,last:{x:p.x,y:p.y},acc:{x:0,y:0},moved:false,pins:(sel[0]==='s'&&follow)?symPins(M.syms[+sel.split(':')[1]]):null};}
+  if(h!==undefined&&sel){drag={type:'handle',h:h==='ph'?h:+h,moved:false,snap:false,sx:e.clientX,sy:e.clientY};return;}
+  if(t){const k=t.dataset.k; const d0={type:'press',k,sx:e.clientX,sy:e.clientY,cx:e.clientX,cy:e.clientY,lp:p,v:{...view},moved:false};
+    d0.tm=setTimeout(()=>{ if(drag!==d0) return; sel=d0.k; redraw(); try{navigator.vibrate&&navigator.vibrate(12);}catch(x){}
+      drag={type:'item',sx:d0.cx,sy:d0.cy,last:null,acc:{x:0,y:0},moved:false,pins:(sel[0]==='s'&&follow)?symPins(M.syms[+sel.split(':')[1]]):null}; },LONGP);
+    drag=d0; }
   else drag={type:'pan',sx:e.clientX,sy:e.clientY,v:{...view},moved:false};
 });
 svg.addEventListener('pointermove',e=>{
@@ -381,22 +490,29 @@ svg.addEventListener('pointermove',e=>{
     const w=pinch.v.w*f,h=pinch.v.h*f; const cx=pinch.v.x+(pinch.cx-r.left-(r.width-pinch.v.w/sc0)/2)*sc0, cy=pinch.v.y+(pinch.cy-r.top-(r.height-pinch.v.h/sc0)/2)*sc0;
     view={x:cx-(cx-pinch.v.x)*f-((a.x+b.x)/2-pinch.cx)*sc0*f,y:cy-(cy-pinch.v.y)*f-((a.y+b.y)/2-pinch.cy)*sc0*f,w,h};setView();return;}
   if(!drag) return;
+  if(drag.type==='press'){ drag.cx=e.clientX; drag.cy=e.clientY; drag.lp=toDoc(e);
+    if(Math.hypot(e.clientX-drag.sx,e.clientY-drag.sy)<8) return;
+    clearTimeout(drag.tm); drag={type:'pan',sx:drag.sx,sy:drag.sy,v:drag.v,moved:false}; }
   const dx=e.clientX-drag.sx, dy=e.clientY-drag.sy; if(!drag.moved&&Math.hypot(dx,dy)<5) return;
   if(!drag.moved){drag.moved=true; if(drag.type==='item'||drag.type==='handle') snapshot();}
   if(drag.type==='pan'){const r=svg.getBoundingClientRect();const sc=Math.max(drag.v.w/r.width,drag.v.h/r.height);view={...drag.v,x:drag.v.x-dx*sc,y:drag.v.y-dy*sc};setView();}
   else if(drag.type==='item'){
-    const p=toDoc(e); drag.acc.x+=p.x-drag.last.x; drag.acc.y+=p.y-drag.last.y; drag.last={x:p.x,y:p.y};
+    const p=toDoc(e); if(!drag.last){ drag.last={x:p.x,y:p.y}; return; } drag.acc.x+=p.x-drag.last.x; drag.acc.y+=p.y-drag.last.y; drag.last={x:p.x,y:p.y};
     const g=G()||1; const mx=Math.round(drag.acc.x/g)*g, my=Math.round(drag.acc.y/g)*g;
-    if(mx||my){ if(sel[0]==='s'){ shiftSym(M.syms[+sel.split(':')[1]],mx,my); if(drag.pins) followWires(drag.pins,mx,my); } else shiftLine(sel,mx,my); drag.acc.x-=mx; drag.acc.y-=my; redrawKeep(); }
+    if(mx||my){ if(sel[0]==='s'){ shiftSym(M.syms[+sel.split(':')[1]],mx,my); if(drag.pins) followWires(drag.pins,mx,my); } else if(sel[0]==='p'){ const ph=M.doc.photos[+sel.split(':')[1]]; ph.x+=mx; ph.y+=my; } else shiftLine(sel,mx,my); drag.acc.x-=mx; drag.acc.y-=my; redrawKeep(); }
+  } else if(drag.type==='handle'&&drag.h==='ph'){
+    const p=toDoc(e); window.__wlPhotoResize(+sel.split(':')[1],p); redrawKeep();
   } else if(drag.type==='handle'){
     const p=toDoc(e); const f=F(lineOf(sel)); f[drag.h]=String(sn(p.x)); f[drag.h+1]=String(sn(p.y)); setLine(sel,f); redrawKeep();
   }
 });
+const LONGP=200;   // appui long (ms) avant de pouvoir sélectionner ou déplacer un objet
 function redrawKeep(){const r=folioSVG(M,cur,{edit:true});svg.innerHTML=`<g id="page">${r.body}</g><g id="ov">${sel?selOverlay():''}</g>`;}
 function endPtr(e){
   const had=ptrs.delete(e.pointerId); if(!had) return;
   if(ptrs.size<2) pinch=null;
   if(drag&&ptrs.size===0){
+    if(drag.type==='press'){ clearTimeout(drag.tm); if(sel&&drag.k!==sel){sel=null;redraw();} drag=null; return; }
     if(drag.type==='tool'&&!drag.moved) toolTap(drag.p);
     if(drag.type==='pan'&&!drag.moved&&sel){sel=null;redraw();}
     if((drag.type==='item'||drag.type==='handle')&&drag.moved) redraw();
@@ -426,14 +542,16 @@ function lastWire(){const L=M.g.FilBus?.lines||[];for(let i=L.length-1;i>=0;i--)
 $('bDel').onclick=()=>{ if(!sel) return; const k=sel.split(':'); snapshot();
   if(k[0]==='s'){ const i=+k[1]; const s=M.syms[i]; const bl=M.doc.blocks; const a=bl.indexOf(s.head), b=bl.indexOf(s.fin); bl.splice(a,b-a+1); renumSyms(); }
   else if(k[0]==='ct'){ setLine(sel,F(lineOf(sel)).map((v,i)=>i===2?'':v)); }
+  else if(k[0]==='p'){ M.doc.photos.splice(+k[1],1); }
   else { const B={w:'FilBus',j:'Jonction',n:'Numero',t:'Texte',ds:'DSansTexte'}[k[0]]; M.g[B].lines.splice(+k[1],1); }
-  M=buildModel(M.doc); sel=null; redraw(); };
+  M=buildModel(M.doc); sel=null; redraw(); if(window.__wlChanged) window.__wlChanged(); };
 function renumSyms(){ let n=0; for(const b of M.doc.blocks){ if(/^Symbole·\d+$/.test(b.name)) b.name='Symbole·'+(n++); } const c=M.doc.blocks.find(b=>b.name==='NombreSymbole'); if(c) c.lines[0]=n+SEP; }
 $('bDup').onclick=()=>{ if(!sel) return; snapshot(); const k=sel.split(':');
   if(k[0]==='s'){ const s=M.syms[+k[1]]; const bl=M.doc.blocks; const a=bl.indexOf(s.head), b=bl.indexOf(s.fin);
     const copy=JSON.parse(JSON.stringify(bl.slice(a,b+1))); const at=bl.indexOf(M.syms[M.syms.length-1].fin)+1; bl.splice(at,0,...copy);
     M=buildModel(M.doc); renumSyms(); M=buildModel(M.doc); const ns=M.syms[M.syms.length-1]; shiftSym(ns,400,400);
     const hd=F(ns.blocks.Autre.lines[1]); hd[8]=String(cur); ns.blocks.Autre.lines[1]=J(hd); sel='s:'+(M.syms.length-1);
+  } else if(k[0]==='p'){ const ph=JSON.parse(JSON.stringify(M.doc.photos[+k[1]])); ph.x+=400; ph.y+=400; M.doc.photos.push(ph); sel='p:'+(M.doc.photos.length-1);
   } else { const B={w:'FilBus',j:'Jonction',n:'Numero',t:'Texte'}[k[0]]; M.g[B].lines.push(M.g[B].lines[+k[1]]); sel=k[0]+':'+(M.g[B].lines.length-1); shiftLine(sel,400,400); }
   redraw(); };
 
@@ -442,12 +560,12 @@ $('file').onchange=async e=>{
   const f=e.target.files[0]; if(!f) return; fname=f.name;
   try{ const txt=decode(await f.arrayBuffer()); if(!txt.startsWith('<< Sch')) throw new Error('Ce fichier ne ressemble pas à un schéma WinRelais.');
     const doc=parseXrs(txt); M=buildModel(doc); if(!M.folios.length) throw new Error('Aucun folio trouvé.');
-    cur=0;sel=null;pending=null;undoStack=[];dirty=false;$('bUndo').disabled=true;
+    cur=0;sel=null;pending=null;undoStack=[];redoStack=[];dirty=false;undoUi(); M.doc.photos=[]; if(window.__wlOpened) window.__wlOpened(f.name);
     ['bSave','bPdf','bFit','bNom'].forEach(i=>$(i).disabled=false); $('empty').style.display='none'; buildTabs(); redraw(); fit(); jsonData=null; mergeLib(M);
   }catch(err){alert('Lecture impossible : '+err.message);}
   e.target.value='';
 };
-$('bSave').onclick=()=>{ if(!M) return; const bytes=encode(serializeXrs(M.doc)); const name=fname.replace(/\.xrs$/i,'')+(dirty?'_modifié':'')+'.xrs';
+$('bSave').onclick=()=>{ if(!M) return; if(window.__wlBeforeSave) window.__wlBeforeSave(); const bytes=encode(serializeXrs(M.doc)); const name=fname.replace(/\.xrs$/i,'')+(dirty?'_modifié':'')+'.xrs';
   const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([bytes],{type:'application/octet-stream'})); a.download=name; document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},2000); };
 $('bPdf').onclick=()=>{ if(!M) return; const P=$('print'); P.innerHTML='';
   const [W,H]=folioSize(M,0); const st=document.createElement('style'); st.id='pg'; st.textContent=`@page{size:${W/100}mm ${H/100}mm;margin:0}`; document.getElementById('pg')?.remove(); document.head.appendChild(st);
@@ -546,7 +664,7 @@ function cartoucheTpl(){
   return t;
 }
 function loadDoc(doc,name){
-  M=buildModel(doc); fname=name; cur=0;sel=null;pending=null;undoStack=[];dirty=false;$('bUndo').disabled=true;
+  M=buildModel(doc); fname=name; cur=0;sel=null;pending=null;undoStack=[];redoStack=[];dirty=false;undoUi(); M.doc.photos=M.doc.photos||[];
   ['bSave','bPdf','bFit','bNom'].forEach(i=>$(i).disabled=false); $('empty').style.display='none'; buildTabs(); redraw(); fit();
 }
 $('fjson').onchange=async e=>{
@@ -588,8 +706,8 @@ async function loadEmbedded(){
     const txt=new TextDecoder('utf-8').decode(await gunzipBytes(bin)); EMB=JSON.parse(txt); embState=''; }
   catch(e){ embState='Bibliothèque intégrée indisponible ('+(e.message||e)+')'; }
 }
-async function initLib(){ try{USER=(await idb.get('lib'))||[];}catch(e){USER=[];} loadLib(); await loadEmbedded(); loadLib(); if($('lib').style.display==='flex') openLib(); }
-async function saveUser(){ try{await idb.set('lib',USER);}catch(e){} }
+async function initLib(){ try{USER=(await idb.get('lib'))||[];}catch(e){USER=[];} try{ if(window.__wlLibLoad){ const ext=window.__wlLibLoad(); if(ext&&ext.length){ const have=new Set(USER.map(libKey)); let n=0; for(const e of ext){ if(e&&e.cat!=null&&!have.has(libKey(e))){ have.add(libKey(e)); USER.push(e); n++; } } if(n) try{await idb.set('lib',USER);}catch(x){} } if(window.__wlLibSave) window.__wlLibSave(USER,true); } }catch(e){} loadLib(); await loadEmbedded(); loadLib(); if($('lib').style.display==='flex') openLib(); }
+async function saveUser(){ try{await idb.set('lib',USER);}catch(e){} try{ if(window.__wlLibSave) window.__wlLibSave(USER); }catch(e){} }
 function addToUser(entries){
   const have=new Set([...BUILTIN_LIB,...EMB,...USER].map(libKey)); let n=0;
   for(const e of entries){ if(have.has(libKey(e)))continue; have.add(libKey(e)); USER.push(e); n++; }
@@ -599,9 +717,7 @@ function mergeLib(m){ return addToUser(libFromModel(m)); }
 /* aperçu d'un symbole */
 function symThumb(blocks,px){
   const s={blocks}; const bb=symBBox(s); const pad=120; const w=bb[2]-bb[0]+2*pad, h=bb[3]-bb[1]+2*pad; const g=[];
-  for(const l of (blocks.Contour?.lines||[])){if(!l)continue;const f=F(l);g.push(`<line x1="${f[0]}" y1="${f[1]}" x2="${f[2]}" y2="${f[3]}" stroke="${col(f[6])}" stroke-width="${Math.max(num(f[4],20),20)}" stroke-linecap="round"/>`);}
-  for(const l of (blocks.Arc?.lines||[])){if(!l)continue;const f=F(l);g.push(`<path d="${arcPath(num(f[0]),num(f[1]),num(f[2]),num(f[3]),num(f[4]))}" fill="none" stroke="${col(f[6])}" stroke-width="${Math.max(num(f[5],20),20)}"/>`);}
-  for(const l of (blocks.Broche?.lines||[])){if(!l)continue;const f=F(l);g.push(`<line x1="${f[1]}" y1="${f[2]}" x2="${f[3]}" y2="${f[4]}" stroke="#000" stroke-width="20"/><rect x="${num(f[1])-35}" y="${num(f[2])-35}" width="70" height="70" fill="#000"/>`);}
+  g.push(...symG(blocks,{thumb:true}));
   const r=Math.min(px/w,px/h); return `<svg xmlns="${NS}" viewBox="${bb[0]-pad} ${bb[1]-pad} ${w} ${h}" width="${Math.max(24,Math.round(w*r))}" height="${Math.max(24,Math.round(h*r))}" style="background:#fff;border-radius:6px">${g.join('')}</svg>`;
 }
 const entBlocks=(e)=>Object.fromEntries(entryBlocks(e).map(b=>[b.name,b]));
@@ -729,8 +845,95 @@ $('libweb').onclick=openOnline;
 
 initLib();
 
+/* ====================== WillRelais : photos, grille de points, onglet Fichier, annuler / rétablir ====================== */
+(function(){
+  const W=window.WrApi||null;
+  const st=document.createElement('style');
+  st.textContent='#fmenu{display:none;position:fixed;z-index:30;left:6px;right:6px;top:56px;background:#1f2a37;border:1px solid #374151;border-radius:12px;padding:10px;gap:8px;flex-wrap:wrap;box-shadow:0 10px 30px #0008}'+
+    '#fmenu.on{display:flex}#fmenu>*{flex:1 1 140px}#fmenu .btn,#fmenu button{justify-content:center;min-height:44px}#fmenu small{flex-basis:100%;color:#9ca3af}'+
+    '#fundo{position:absolute;right:8px;bottom:8px;display:flex;gap:6px;z-index:5}#fundo button{width:48px;height:48px;border-radius:50%;border:0;background:#1f2a37e6;color:#fff;font-size:22px;box-shadow:0 2px 8px #0006}#fundo button:disabled{opacity:.35}'+
+    '#insp h5.ih{margin:10px 0 4px;font-size:12px;color:#374151;text-transform:uppercase;letter-spacing:.04em}#insp h5 small{text-transform:none;color:#6b7280;letter-spacing:0}#insp select{padding:8px;border:1px solid #bbb;border-radius:6px;font:inherit;background:#fff}'+
+    '#insp .row button{padding:9px 10px;border:0;border-radius:8px;background:#e5e7eb;font:inherit}#insp{max-height:42%}';
+  document.head.appendChild(st);
+
+  /* ---------- onglet Fichier : tout ce qui concerne les fichiers ---------- */
+  const bar=document.querySelector('.bar'); const fm=document.createElement('div'); fm.id='fmenu'; document.body.appendChild(fm);
+  const fb=document.createElement('button'); fb.id='bFile'; fb.textContent='📄 Fichier'; fb.style.cssText='background:var(--acc);color:#fff'; bar.insertBefore(fb,bar.firstChild);
+  const openLbl=$('file').closest('label'); openLbl.style.background=''; openLbl.style.color=''; openLbl.firstChild.textContent='📂 Ouvrir…';
+  $('bSave').textContent='💾 Enregistrer…'; $('bPdf').textContent='🖨 PDF / imprimer'; $('bNom').textContent='📋 Nomenclature (.csv)';
+  const jl=$('fjson').closest('label'); jl.firstChild.textContent='⤵ Import JSON';
+  const phl=document.createElement('label'); phl.className='btn'; phl.innerHTML='📷 Importer une photo<input id="fphoto" type="file" accept="image/*" hidden>';
+  [openLbl,$('bSave'),$('bPdf'),phl,jl,$('bNom')].forEach(e=>fm.appendChild(e));
+  const info=document.createElement('small'); info.id='finfo'; fm.appendChild(info);
+  const closeF=()=>fm.classList.remove('on');
+  fb.onclick=(e)=>{ e.stopPropagation(); info.textContent=W&&W.state?('Bibliothèque de symboles et photos : dossier '+(JSON.parse(W.state()).def||'WillRelais')+' (partagé avec l\'autre appareil).'):''; fm.classList.toggle('on'); };
+  fm.addEventListener('click',e=>{ if(e.target.closest('button')) setTimeout(closeF,50); });
+  fm.addEventListener('change',()=>setTimeout(closeF,50));
+  document.addEventListener('pointerdown',e=>{ if(fm.classList.contains('on')&&!e.target.closest('#fmenu')&&e.target!==fb) closeF(); },true);
+  /* annuler / rétablir : barre du haut et boutons ronds sur le schéma */
+  const rb=document.createElement('button'); rb.id='bRedo'; rb.textContent='↷ Rétablir'; rb.disabled=true; $('bUndo').textContent='↶ Annuler'; $('bUndo').after(rb); rb.onclick=()=>redo();
+  const fu=document.createElement('div'); fu.id='fundo'; fu.innerHTML='<button id="fUndo" disabled title="Annuler">↶</button><button id="fRedo" disabled title="Rétablir">↷</button>'; $('stage').appendChild(fu);
+  $('fUndo').onclick=()=>undo(); $('fRedo').onclick=()=>redo();
+  $('status').style.bottom='8px';
+
+  /* ---------- grille de points ---------- */
+  let gridOn=false; try{gridOn=localStorage.getItem('wl.grid')==='1';}catch(e){}
+  const gb=document.createElement('button'); gb.id='bGrid'; gb.textContent='⠿ Grille'; gb.title='Grille de points'; gb.classList.toggle('on',gridOn);
+  $('snap').after(gb);
+  gb.onclick=()=>{ gridOn=!gridOn; gb.classList.toggle('on',gridOn); try{localStorage.setItem('wl.grid',gridOn?'1':'0');}catch(e){} if(M) redraw(); };
+  window.__wlGrid=(Wd,Hd)=>{ if(!gridOn) return ''; const r=svg.getBoundingClientRect(); const upp=Math.max(view.w/Math.max(r.width,1),view.h/Math.max(r.height,1));
+    let s=G()||200; while(s/upp<9) s*=2; const rr=Math.max(6,upp*1.1);
+    return `<defs><pattern id="wlgd" x="${-s/2}" y="${-s/2}" width="${s}" height="${s}" patternUnits="userSpaceOnUse"><circle cx="${s/2}" cy="${s/2}" r="${rr}" fill="#94a3b8"/></pattern></defs><rect x="0" y="0" width="${Wd}" height="${Hd}" fill="url(#wlgd)" pointer-events="none"/>`; };
+  let gt=null; const regrid=()=>{ if(!gridOn||!M) return; clearTimeout(gt); gt=setTimeout(()=>{ if(!drag) redrawKeep(); },150); };
+  svg.addEventListener('pointerup',regrid); svg.addEventListener('wheel',regrid,{passive:true});
+
+  /* ---------- photos : dans le schéma, rangées à côté du .xrs (nom.photos.json) ---------- */
+  const PHD={}; let seq=0; const nid=()=>Date.now().toString(36)+(seq++).toString(36);
+  const PH=()=>{ if(!M.doc.photos) M.doc.photos=[]; return M.doc.photos; };
+  window.__wlPhotos=(Mo,n,opts)=>(Mo.doc.photos||[]).map((p,i)=>p.f!==n?'':(PHD[p.id]?`<image href="${PHD[p.id]}" x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" preserveAspectRatio="none"${opts.edit?` data-k="p:${i}"`:''}/>`:`<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" fill="#e5e7eb" stroke="#9ca3af" stroke-width="20"${opts.edit?` data-k="p:${i}"`:''}/>`)).join('');
+  window.__wlPhotoSel=(i)=>{ const p=PH()[i]; if(!p) return ''; return `<rect x="${p.x-40}" y="${p.y-40}" width="${p.w+80}" height="${p.h+80}" fill="none" stroke="#2563eb" stroke-width="30" stroke-dasharray="120 60" pointer-events="none"/><circle cx="${p.x+p.w}" cy="${p.y+p.h}" r="150" fill="#2563eb" stroke="#fff" stroke-width="25" data-h="ph"/>`; };
+  window.__wlPhotoResize=(i,pt)=>{ const p=PH()[i]; if(!p) return; const k=p.h/p.w; p.w=Math.max(400,Math.round(pt.x-p.x)); p.h=Math.round(p.w*k); };
+  window.__wlPhotoInsp=(i)=>{ const p=PH()[i]; if(!p) return '';
+    return `<h4>Photo</h4>`+row('Largeur (mm)',`<input type="number" id="pw" value="${Math.round(p.w/10)/10}" step="1">`)+row('Position x,y',`<input type="number" id="px" value="${p.x}"><input type="number" id="py" value="${p.y}">`)+
+      `<div class="row" style="flex-wrap:wrap"><button id="pe" style="background:#3b82f6;color:#fff">✏️ Modifier (recadrer, redresser, dessiner)</button><button id="pr">↻ 90°</button><label class="btn" style="background:#e5e7eb;padding:9px 10px;border-radius:8px">🔁 Remplacer<input id="prp" type="file" accept="image/*" hidden></label></div>`+
+      (W&&W.editPhoto?'':'<small style="color:#6b7280">Modification de la photo : dans l\'appli Android (éditeur de photo d\'Interventions).</small>'); };
+  window.__wlPhotoInspBind=(el,i)=>{ const p=PH()[i];
+    el.querySelector('#pw').onchange=e=>{ snapshot(); const k=p.h/p.w; p.w=Math.max(400,Math.round(num(e.target.value,60)*100)); p.h=Math.round(p.w*k); redraw(); };
+    el.querySelector('#px').onchange=e=>{ snapshot(); p.x=Math.round(num(e.target.value,p.x)); redraw(); };
+    el.querySelector('#py').onchange=e=>{ snapshot(); p.y=Math.round(num(e.target.value,p.y)); redraw(); };
+    el.querySelector('#pr').onclick=async()=>{ const d=await rotate90(PHD[p.id]); snapshot(); const id=nid(); PHD[id]=d; p.id=id; const cx=p.x+p.w/2, cy=p.y+p.h/2; [p.w,p.h]=[p.h,p.w]; p.x=Math.round(cx-p.w/2); p.y=Math.round(cy-p.h/2); redraw(); };
+    el.querySelector('#prp').onchange=async e=>{ const f=e.target.files[0]; if(!f) return; const d=await fileToData(f); snapshot(); const id=nid(); PHD[id]=d.url; p.id=id; p.h=Math.round(p.w*d.h/d.w); redraw(); };
+    el.querySelector('#pe').onclick=()=>{ if(!W||!W.editPhoto) return alert('La modification des photos se fait dans l\'appli Android (éditeur de photo d\'Interventions).');
+      W.editPhoto('wrphoto-'+p.id+'.jpg',PHD[p.id].split(',')[1]); };
+  };
+  window.__wrPhotoDone=async(url,name)=>{ const m=/^wrphoto-(.+?)-ok\.jpg$/.exec(name||''); if(!m||!M) return;
+    const i=PH().findIndex(p=>p.id===m[1]); if(i<0) return;
+    try{ const b=await (await fetch(url)).blob(); const d=await fileToData(b,4000); snapshot(); const p=PH()[i]; const id=nid(); PHD[id]=d.url; p.id=id; p.h=Math.round(p.w*d.h/d.w); cur=p.f; sel='p:'+i; buildTabs(); redraw(); }
+    catch(e){ alert('Photo modifiée illisible : '+e.message); } };
+  function loadImg(u){ return new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=()=>rej(new Error('image illisible')); im.src=u; }); }
+  async function fileToData(f,max){ max=max||2000; const u=URL.createObjectURL(f); try{ const im=await loadImg(u); let w=im.naturalWidth,h=im.naturalHeight; const k=Math.min(1,max/Math.max(w,h)); w=Math.round(w*k); h=Math.round(h*k);
+      const c=document.createElement('canvas'); c.width=w; c.height=h; const x=c.getContext('2d'); x.fillStyle='#fff'; x.fillRect(0,0,w,h); x.drawImage(im,0,0,w,h); return {url:c.toDataURL('image/jpeg',0.86),w,h}; } finally{ URL.revokeObjectURL(u); } }
+  async function rotate90(d){ const im=await loadImg(d); const c=document.createElement('canvas'); c.width=im.naturalHeight; c.height=im.naturalWidth; const x=c.getContext('2d'); x.translate(c.width,0); x.rotate(Math.PI/2); x.drawImage(im,0,0); return c.toDataURL('image/jpeg',0.9); }
+  $('fphoto').onchange=async e=>{ const f=e.target.files[0]; e.target.value=''; if(!f) return; if(!M) return alert('Ouvre d\'abord un schéma.');
+    try{ const d=await fileToData(f); snapshot(); const id=nid(); PHD[id]=d.url; const w=Math.round(Math.min(8000,view.w*0.4)), h=Math.round(w*d.h/d.w);
+      PH().push({id,f:cur,x:Math.round(view.x+view.w/2-w/2),y:Math.round(view.y+view.h/2-h/2),w,h}); sel='p:'+(PH().length-1); tool='sel'; redraw(); }
+    catch(x){ alert('Photo illisible : '+x.message); } };
+  /* outil « + Photo » dans la barre des outils */
+  const tp=document.createElement('button'); tp.textContent='+ Photo'; tp.onclick=()=>$('fphoto').click(); $('bLib').after(tp);
+  /* fichier compagnon : nom.photos.json (photos et positions) */
+  window.__wlSidecar=()=>{ if(!M) return null; const L=PH(); if(!L.length&&!M.doc.hadSide) return null; const data={}; L.forEach(p=>{ if(PHD[p.id]) data[p.id]=PHD[p.id]; });
+    return JSON.stringify({format:'willrelais-photos/1',photos:L,data}); };
+  window.__wlOpened=(name)=>{ M.doc.hadSide=false; if(!window.__wlLoadSide) return; const t=window.__wlLoadSide(name); if(!t) return;
+    try{ const o=JSON.parse(t); for(const id in (o.data||{})) PHD[id]=o.data[id]; M.doc.photos=(o.photos||[]).filter(p=>p&&p.id); M.doc.hadSide=true; redraw(); }catch(e){} };
+
+  /* ---------- bibliothèque de symboles : copie dans le dossier WillRelais ---------- */
+  let lt=null, lastLib='';
+  window.__wlLibLoad=()=>{ if(!W||!W.libLoad) return null; try{ const t=W.libLoad(); return t?JSON.parse(t):null; }catch(e){ return null; } };
+  window.__wlLibSave=(U)=>{ if(!W||!W.libSave) return; clearTimeout(lt); lt=setTimeout(()=>{ try{ const t=JSON.stringify(U); if(t!==lastLib){ lastLib=t; W.libSave(t); } }catch(e){} },1500); };
+})();
+
 /* hooks de test */
-window.__wr={jsonToDoc,insertSym,get LIB(){return LIB;},parseXrs,serializeXrs,buildModel,decode,encode,folioSVG,load(buf,name){const doc=parseXrs(decode(buf));M=buildModel(doc);fname=name||fname;cur=0;buildTabs();$('empty').style.display='none';['bSave','bPdf','bFit'].forEach(i=>$(i).disabled=false);redraw();fit();},go(n){cur=n;sel=null;buildTabs();redraw();fit();},get M(){return M;}};
+window.__wr={symG,pinEnd,equip,undo,redo,get undoN(){return undoStack.length;},get sel(){return sel;},set sel(v){sel=v;},redraw:()=>redraw(),snapshot:()=>snapshot(),jsonToDoc,insertSym,get LIB(){return LIB;},parseXrs,serializeXrs,buildModel,decode,encode,folioSVG,load(buf,name){const doc=parseXrs(decode(buf));M=buildModel(doc);fname=name||fname;cur=0;buildTabs();$('empty').style.display='none';['bSave','bPdf','bFit'].forEach(i=>$(i).disabled=false);redraw();fit();},go(n){cur=n;sel=null;buildTabs();redraw();fit();},get M(){return M;}};
 </script>
 </body>
 </html>
