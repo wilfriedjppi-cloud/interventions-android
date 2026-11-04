@@ -54,10 +54,10 @@ public class MainActivity extends Activity {
     static final String ACT_SETTINGS = "fr.palmero.interventions.REGLAGES";
 
     WebView web;
-    Sync syncer;
+    static Sync syncer;   // un seul serveur de synchro pour l'appli (Interventions et WillRelais)
     synchronized Sync sync() {
-        if (syncer == null) {
-            syncer = new Sync(this, api);
+        if (syncer == null) syncer = new Sync(this, api);
+        if (!(this instanceof WrActivity)) {
             syncer.onRemote = () -> runOnUiThread(() -> { if (web != null) web.evaluateJavascript("window.biNetRemote&&window.biNetRemote()", null); });
             syncer.onPage = v -> runOnUiThread(() -> new android.os.Handler(getMainLooper()).postDelayed(() -> reloadPage("Page mise à jour depuis l'autre appareil : v" + v), 4000));
             syncer.onApk = f -> runOnUiThread(() -> askApk(f));
@@ -156,7 +156,7 @@ public class MainActivity extends Activity {
         web.loadUrl(ORIGIN + startPath());
     }
 
-    /** Page de départ (WrActivity : schémas WinRelais). */
+    /** Page de départ (WrActivity : WillRelais). */
     String startPath() { return "/index.html"; }
     WebResourceResponse intercept(WebResourceRequest r) { return null; }
     void beforeLoad() { }
@@ -190,7 +190,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        try { if (syncer != null) syncer.stop(); } catch (Exception ignored) { }
+        if (!(this instanceof WrActivity)) try { if (syncer != null) { syncer.stop(); syncer = null; } } catch (Exception ignored) { }
         super.onDestroy();
     }
 
@@ -448,9 +448,9 @@ public class MainActivity extends Activity {
                 final byte[] b;
                 try (InputStream in = getContentResolver().openInputStream(u)) { b = Api.readAll(in); }
                 if (!Api.signed(b)) { new AlertDialog.Builder(this).setTitle("Page refusée").setMessage("« " + name + " » n'est pas signée par l'auteur d'Interventions : page modifiée ou non officielle.\n\nPar sécurité, seules les pages officielles sont installées.").setPositiveButton("OK", null).show(); return; }
-                if (Api.isWrPage(b)) {   // page « Schémas WinRelais » : rangée dans le dossier appli, à côté de la page Interventions
+                if (Api.isWrPage(b)) {   // page WillRelais : rangée dans le dossier appli, à côté de la page Interventions
                     int wv = Api.wrVersion(b), lv = api.wrLocalVersion();
-                    new AlertDialog.Builder(this).setTitle("Schémas WinRelais")
+                    new AlertDialog.Builder(this).setTitle("WillRelais")
                             .setMessage((lv > 0 ? "Page reçue : v" + wv + " (actuelle : v" + lv + ").\n\n" : "") + "L'installer dans " + api.appDir().getAbsolutePath() + " ?")
                             .setPositiveButton("Installer", (d, w) -> {
                                 try { String n = api.importWr(b); Toast.makeText(this, "Installée : " + n, Toast.LENGTH_LONG).show(); openWr(); }
@@ -583,7 +583,7 @@ public class MainActivity extends Activity {
     }
 
     void openWr() {
-        try { startActivity(new Intent(this, WrActivity.class).setAction(Intent.ACTION_MAIN)); } catch (Exception e) { Toast.makeText(this, "Schémas WinRelais : " + e.getMessage(), Toast.LENGTH_LONG).show(); }
+        try { startActivity(new Intent(this, WrActivity.class).setAction(Intent.ACTION_MAIN)); } catch (Exception e) { Toast.makeText(this, "WillRelais : " + e.getMessage(), Toast.LENGTH_LONG).show(); }
     }
 
     void reloadPage(String msg) {

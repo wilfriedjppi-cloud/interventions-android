@@ -86,10 +86,10 @@
         <activity
             android:name=".WrActivity"
             android:exported="true"
-            android:label="WinRelais"
+            android:label="WillRelais"
             android:icon="@mipmap/ic_wr"
             android:roundIcon="@mipmap/ic_wr"
-            android:taskAffinity="fr.palmero.interventions.wr"
+            android:taskAffinity="fr.palmero.interventions.willrelais"
             android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|uiMode|smallestScreenSize|density"
             android:windowSoftInputMode="adjustResize">
@@ -98,7 +98,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
             <!-- fichiers .xrs (gestionnaire de fichiers, Drive…) : reconnus par l'extension -->
-            <intent-filter android:label="Ouvrir dans WinRelais">
+            <intent-filter android:label="Ouvrir dans WillRelais">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
@@ -112,7 +112,7 @@
                 <data android:pathPattern=".*\\.XRS" />
             </intent-filter>
             <!-- pièces jointes (Gmail…) : type générique, le contenu est vérifié à l'ouverture -->
-            <intent-filter android:label="Ouvrir dans WinRelais">
+            <intent-filter android:label="Ouvrir dans WillRelais">
                 <action android:name="android.intent.action.VIEW" />
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />

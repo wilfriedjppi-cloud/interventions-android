@@ -80,6 +80,7 @@ class Sync {
     /* ---------- démarrage : serveur local + annonce sur le réseau ---------- */
     synchronized String start(String code, String devId, String devName) {
         token = code == null || code.trim().length() < 4 ? "" : sha("bi-sync|" + code.trim());
+        sp.edit().putString("code", code == null ? "" : code).putString("dev", devId == null ? "" : devId).putString("name", devName == null ? "" : devName).apply();   // repris par WillRelais ouvert seul
         dev = devId == null ? "" : devId;
         name = devName == null ? "" : devName;
         if (token.isEmpty()) { stop(); return "code"; }
@@ -180,7 +181,8 @@ class Sync {
             if (token.isEmpty() || !token.equals(h.get("x-pair"))) { reply(out, 403, "{\"error\":\"code de jumelage différent\"}"); return; }
             if (path.equals("/ping")) {
                 JSONObject o = new JSONObject(); o.put("ok", true); o.put("dev", dev); o.put("name", name); o.put("busy", busy.get());
-                o.put("pv", Api.pageVersion(api.pageBytes())); o.put("av", appCode()); o.put("wv", Math.max(0, api.wrLocalVersion()));
+                o.put("pv", Api.pageVersion(api.pageBytes())); o.put("av", appCode()); o.put("wv", Math.max(0, api.wrLocalVersion())); o.put("wd", new JSONArray(api.wrDirs()));
+                try { String wd = qp.get("wd"); if (wd != null) { JSONArray wa = new JSONArray(wd); java.util.List<String> wl = new java.util.ArrayList<>(); for (int i = 0; i < wa.length(); i++) wl.add(wa.optString(i)); api.wrAddDirs(wl); } } catch (Exception ignored) { }   // dossiers WillRelais de l'autre appareil
                 reply(out, 200, o.toString()); return;
             }
             if (path.equals("/live")) {                       // saisie en direct de l'autre appareil (petit message) : passe même pendant une synchro
@@ -191,11 +193,20 @@ class Sync {
                 try { reply(out, 200, "{\"ok\":true}"); } catch (Exception ignored) { }
                 return;
             }
+            if (path.equals("/xls")) { reply(out, 200, xls(qp.get("p")).toString()); return; }          // parcourir les dossiers de cet appareil depuis l'autre
+            if (path.equals("/xfind")) { reply(out, 200, xfind(qp.get("q"), qp.get("p")).toString()); return; }   // chercher un fichier par son nom
+            if (path.equals("/xget")) {                                  // recopier un fichier de cet appareil vers l'autre
+                File f = Api.extFile(qp.get("p"));
+                if (f == null || !f.isFile() || f.length() > 300L * 1024 * 1024) { reply(out, 404, "{}"); return; }
+                out.write(("HTTP/1.0 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: " + f.length() + "\r\nX-Mtime: " + f.lastModified() + "\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+                try (InputStream fi = new FileInputStream(f)) { copy(fi, out, f.length()); }
+                out.flush(); return;
+            }
             if (busy.get() && !path.equals("/ping")) { reply(out, 423, "{\"error\":\"occupé\"}"); return; }
             if (path.equals("/list")) { reply(out, 200, listJson().toString()); return; }
             if (path.equals("/page")) { sendBytes(out, api.pageBytes()); return; }
             if (path.equals("/wr")) { byte[] wb = api.wrBytes(); if (wb == null) reply(out, 404, "{}"); else sendBytes(out, wb); return; }
-            if (path.equals("/wrin")) {                      // page WinRelais plus récente envoyée par l'autre appareil
+            if (path.equals("/wrin")) {                      // page WillRelais plus récente envoyée par l'autre appareil
                 if (len <= 0 || len > 60L * 1024 * 1024) { reply(out, 400, "{}"); return; }
                 ByteArrayOutputStream b = new ByteArrayOutputStream(); copy(in, b, len); byte[] wb = b.toByteArray();
                 boolean ok = Api.signed(wb) && Api.wrVersion(wb) > api.wrLocalVersion();
@@ -236,6 +247,7 @@ class Sync {
                 try (InputStream fi = new FileInputStream(f)) { copy(fi, out, f.length()); }
                 out.flush(); return;
             }
+            if (rel.startsWith("~ext/") && (path.equals("/put") || path.equals("/del")) && !Api.isWrFile(f.getName())) { reply(out, 400, "{\"error\":\"fichier non WillRelais\"}"); return; }
             if (path.equals("/put")) {
                 File dir = f.getParentFile(); if (dir != null && !dir.isDirectory()) dir.mkdirs();
                 File tmp = new File(dir, "." + f.getName() + ".part");
@@ -276,16 +288,44 @@ class Sync {
         if (rel != null && rel.endsWith("/")) rel = rel.substring(0, rel.length() - 1);
         if (rel == null || rel.isEmpty() || rel.startsWith("/") || rel.contains("\\") || rel.contains("\u0000")) return null;
         String[] parts = rel.split("/", -1);
-        if (parts.length > 6) return null;
+        if (parts.length > (rel.startsWith("~ext/") ? 14 : 6)) return null;
         for (String x : parts) if (x.isEmpty() || x.equals(".") || x.equals("..") || x.startsWith(".")) return null;
         if (parts[0].equals("appli")) return null;
+        if (parts[0].equals("~ext")) {                                   // dossiers WillRelais hors de « Gestion interventions » : même chemin sur les deux appareils
+            String r = rel.substring(5);
+            File f = Api.extFile(r);
+            return f != null && api.inWrDirs(r) ? f : null;
+        }
         return new File(base(), rel);
     }
 
     JSONObject listJson() throws Exception {
         JSONObject o = new JSONObject();
         walk(base(), "", o, 0);
+        String br = Api.relOf(base());
+        for (String d : api.wrDirs()) {                                  // dossiers WillRelais ailleurs : seulement les fichiers WillRelais (.xrs, .xsy, nomenclatures)
+            if (br != null && (d.equals(br) || d.startsWith(br + "/"))) continue;   // déjà dans « Gestion interventions »
+            File f = Api.extFile(d); if (f == null) continue;
+            o.put("~ext/" + d + "/", new JSONArray().put(0L).put(-1L));
+            if (f.isDirectory()) walkExt(f, "~ext/" + d, o, 0, br);
+        }
         return o;
+    }
+
+    boolean walkExt(File d, String pre, JSONObject o, int depth, String skip) throws Exception {
+        File[] l = d.listFiles(); if (l == null || depth > 4) return false;
+        boolean any = false;
+        for (File f : l) {
+            String n = f.getName();
+            if (n.startsWith(".") || n.endsWith(".part")) continue;
+            String rel = pre + "/" + n;
+            if (f.isDirectory()) {
+                String r = Api.relOf(f);
+                if (r == null || (skip != null && r.equals(skip)) || r.equalsIgnoreCase("Android")) continue;
+                if (walkExt(f, rel, o, depth + 1, skip)) { o.put(rel + "/", new JSONArray().put(0L).put(-1L)); any = true; }
+            } else if (Api.isWrFile(n)) { o.put(rel, new JSONArray().put(f.lastModified()).put(f.length())); any = true; }
+        }
+        return any;
     }
 
     void walk(File d, String pre, JSONObject o, int depth) throws Exception {
@@ -297,6 +337,90 @@ class Sync {
             String rel = pre.isEmpty() ? n : pre + "/" + n;
             if (f.isDirectory()) { o.put(rel + "/", new JSONArray().put(0L).put(-1L)); walk(f, rel, o, depth + 1); }   // dossiers : même arborescence des deux côtés
             else o.put(rel, new JSONArray().put(f.lastModified()).put(f.length()));
+        }
+    }
+
+    /* ---------- fichiers d'un appareil à l'autre (parcourir, chercher, recopier) : mémoire interne, sauf Android/ et fichiers cachés ---------- */
+    JSONObject xls(String rel) {
+        JSONObject o = new JSONObject();
+        try {
+            File d = Api.extFile(rel); o.put("path", d == null ? "" : Api.relOf(d)); o.put("name", name);
+            JSONArray ds = new JSONArray(), fs = new JSONArray();
+            File[] l = d == null ? null : d.listFiles();
+            if (l != null) {
+                java.util.Arrays.sort(l, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
+                for (File f : l) {
+                    String n = f.getName(); if (n.startsWith(".")) continue;
+                    if (f.isDirectory()) { if (!Api.relOf(f).equalsIgnoreCase("Android")) ds.put(n); }
+                    else fs.put(new JSONObject().put("name", n).put("size", f.length()).put("mtime", f.lastModified()));
+                }
+            }
+            o.put("dirs", ds); o.put("files", fs);
+        } catch (Exception ignored) { }
+        return o;
+    }
+
+    static String fold(String s) { return java.text.Normalizer.normalize(s == null ? "" : s, java.text.Normalizer.Form.NFD).replaceAll("\\p{M}", "").toLowerCase(); }
+
+    JSONObject xfind(String q, String rel) {
+        JSONObject o = new JSONObject(); JSONArray hits = new JSONArray();
+        try {
+            String[] words = fold(q).trim().split("\\s+");
+            File d = Api.extFile(rel == null ? "" : rel);
+            long end = System.currentTimeMillis() + 5000;
+            if (d != null && words.length > 0 && !words[0].isEmpty()) find(d, words, hits, 0, end);
+            o.put("hits", hits); o.put("name", name); o.put("more", hits.length() >= 300 || System.currentTimeMillis() > end);
+        } catch (Exception ignored) { }
+        return o;
+    }
+
+    void find(File d, String[] words, JSONArray hits, int depth, long end) throws Exception {
+        File[] l = d.listFiles(); if (l == null || depth > 12) return;
+        for (File f : l) {
+            if (hits.length() >= 300 || System.currentTimeMillis() > end) return;
+            String n = f.getName(); if (n.startsWith(".")) continue;
+            String r = Api.relOf(f); if (r == null || r.equalsIgnoreCase("Android")) continue;
+            String fn = fold(n); boolean ok = true;
+            for (String w : words) if (!fn.contains(w)) { ok = false; break; }
+            if (ok) hits.put(new JSONObject().put("path", r).put("dir", f.isDirectory()).put("size", f.isFile() ? f.length() : 0).put("mtime", f.lastModified()));
+            if (f.isDirectory()) find(f, words, hits, depth + 1, end);
+        }
+    }
+
+    /** L'autre appareil joignable (déjà vu par la synchro, sinon recherché) : hôte:port ou null. */
+    String peer() {
+        java.util.List<String> l = new java.util.ArrayList<>(liveHosts);
+        for (String c : candidates(null)) if (!l.contains(c)) l.add(c);
+        for (String hp : l) {
+            try { Res r = http(hp, "GET", "/ping", null); if (r.code != 200) continue; JSONObject o = new JSONObject(new String(r.body, StandardCharsets.UTF_8)); if (!o.optString("dev").equals(dev) && !o.optString("dev").isEmpty()) { liveHosts.add(hp); return hp; } } catch (Exception ignored) { }
+        }
+        return null;
+    }
+
+    String remote(String path) throws Exception {
+        String hp = peer(); if (hp == null) throw new Exception("autre appareil injoignable (même Wi-Fi ou point d'accès, appli Interventions ouverte, synchro activée)");
+        Res r = http(hp, "GET", path, null); if (r.code != 200) throw new Exception("refusé (" + r.code + ")");
+        return new String(r.body, StandardCharsets.UTF_8);
+    }
+
+    /** Recopie un fichier de l'autre appareil dans « to » ; garde sa date. */
+    void remoteGet(String rel, File to) throws Exception {
+        String hp = peer(); if (hp == null) throw new Exception("autre appareil injoignable");
+        int c = hp.lastIndexOf(':');
+        try (Socket s = new Socket()) {
+            s.connect(new InetSocketAddress(hp.substring(0, c), Integer.parseInt(hp.substring(c + 1))), 2500); s.setSoTimeout(60000);
+            OutputStream out = s.getOutputStream();
+            out.write(("GET /xget?p=" + URLEncoder.encode(rel, "UTF-8") + " HTTP/1.0\r\nX-Pair: " + token + "\r\nContent-Length: 0\r\n\r\n").getBytes(StandardCharsets.UTF_8)); out.flush();
+            InputStream in = s.getInputStream(); String st = readLine(in); long n = -1, mt = 0; String l;
+            while ((l = readLine(in)) != null && !l.isEmpty()) { String ll = l.toLowerCase(); if (ll.startsWith("content-length:")) n = Long.parseLong(l.substring(15).trim()); if (ll.startsWith("x-mtime:")) mt = Long.parseLong(l.substring(8).trim()); }
+            if (st == null || !st.contains(" 200 ") || n < 0) throw new Exception("fichier introuvable sur l'autre appareil");
+            File dir = to.getParentFile(); if (dir != null && !dir.isDirectory()) dir.mkdirs();
+            File tmp = new File(dir, "." + to.getName() + ".part");
+            try (OutputStream fo = new FileOutputStream(tmp)) { copy(in, fo, n); }
+            if (tmp.length() != n) { tmp.delete(); throw new Exception("transfert incomplet"); }
+            if (to.exists()) to.delete();
+            if (!tmp.renameTo(to)) { tmp.delete(); throw new Exception("écriture impossible"); }
+            if (mt > 0) to.setLastModified(mt);
         }
     }
 
@@ -321,7 +445,7 @@ class Sync {
                 Res w = http(hp, "POST", "/pagein", tmp); tmp.delete();
                 if (w.code == 200 && new String(w.body, StandardCharsets.UTF_8).contains("true")) pr.put("pageSent", lpv);
             }
-            if (ping.has("wv")) {                           // page Schémas WinRelais : la plus récente passe aussi sur l'autre appareil
+            if (ping.has("wv")) {                           // page WillRelais : la plus récente passe aussi sur l'autre appareil
                 int rwv = ping.optInt("wv", 0), lwv = Math.max(0, api.wrLocalVersion());
                 if (rwv > lwv) {
                     Res r = http(hp, "GET", "/wr", null);
@@ -452,7 +576,7 @@ class Sync {
             for (String hp : candidates(manual)) {
                 JSONObject pr = new JSONObject(); pr.put("host", hp);
                 try {
-                    Res r = http(hp, "GET", "/ping", null);
+                    Res r = http(hp, "GET", "/ping?wd=" + URLEncoder.encode(new JSONArray(api.wrDirs()).toString(), "UTF-8"), null);
                     if (r.code == 403) { pr.put("error", "code de jumelage différent"); peers.put(pr); continue; }
                     if (r.code != 200) continue;
                     JSONObject o = new JSONObject(new String(r.body, StandardCharsets.UTF_8));
@@ -462,6 +586,7 @@ class Sync {
                     pr.put("dev", pd); pr.put("name", o.optString("name"));
                     liveHosts.add(hp);
                     if (o.optBoolean("busy")) { pr.put("error", "l'autre appareil synchronise déjà"); peers.put(pr); continue; }
+                    try { JSONArray a = o.optJSONArray("wd"); if (a != null) { java.util.List<String> l = new java.util.ArrayList<>(); for (int i = 0; i < a.length(); i++) l.add(a.optString(i)); api.wrAddDirs(l); } } catch (Exception ignored) { }   // mêmes dossiers WillRelais des deux côtés
                     syncWith(hp, pd, pr);
                     updates(hp, o, pr);
                 } catch (Exception e) { if (pr.has("dev")) pr.put("error", String.valueOf(e.getMessage())); else continue; }

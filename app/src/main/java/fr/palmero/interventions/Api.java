@@ -38,7 +38,7 @@ import java.util.Locale;
 
 /** Le même service que le serveur QPython (/api/…), mais dans l'appli : fichiers dans Documents/Gestion interventions. */
 class Api {
-    static final String VERSION = "appli-3.6";
+    static final String VERSION = "appli-3.7";
     static final String[] SUBS = {"", "Gestion interventions", "Gestion interventions/config/global", "Gestion interventions/config/utilisateur",
             "Gestion interventions/données/OI", "Gestion interventions/données/rapports", "Gestion interventions/données/backup",
             "Gestion interventions/données/gestion", "Gestion interventions/appli"};
@@ -180,7 +180,7 @@ class Api {
         String p = u.getPath() == null ? "/" : u.getPath();
         try {
             if (p.equals("/") || p.equals("/index.html") || p.equals("/interventions.html")) return page();
-            if (p.equals("/winrelais.html")) return wrPage();
+            if (p.equals("/willrelais.html") || p.equals("/winrelais.html")) return wrPage();
             if (p.equals("/favicon.ico")) return resp(404, "text/plain", new byte[0]);
             if (p.startsWith("/lib/") && !p.contains("..")) {   // bibliothèques intégrées à l'APK : lecteur PDF, OCR (moteur + langues), tableur
                 try {
@@ -401,9 +401,10 @@ class Api {
         return resp(200, "text/html", t.getBytes(StandardCharsets.UTF_8));
     }
 
-    /* ---------- page Schémas WinRelais : même dossier appli, fichier winrelais-vN.html (signé), repère « winrelais-version: N » ---------- */
-    static final java.util.regex.Pattern WV = java.util.regex.Pattern.compile("winrelais-version: (\\d+)");
-    static boolean isWrName(String n) { return n.toLowerCase().startsWith("winrelais"); }
+    /* ---------- page WillRelais (schémas .xrs) : même dossier appli, fichier willrelais-vN.html (signé), repère « willrelais-version: N »
+       (les anciennes winrelais-vN.html de l'appli 3.6 sont reconnues puis remplacées) ---------- */
+    static final java.util.regex.Pattern WV = java.util.regex.Pattern.compile("wi(?:n|ll)relais-version: (\\d+)");
+    static boolean isWrName(String n) { n = n.toLowerCase(); return n.startsWith("willrelais") || n.startsWith("winrelais"); }
     static int wrVersion(byte[] b) {
         if (b == null) return -1;
         java.util.regex.Matcher m = WV.matcher(new String(b, 0, Math.min(b.length, 8192), StandardCharsets.UTF_8));
@@ -412,7 +413,7 @@ class Api {
     static boolean isWrPage(byte[] b) { return wrVersion(b) > 0; }
     String wrSource = "";
 
-    /** La page WinRelais la plus récente : dossier appli (signée) ou celle intégrée à l'APK, recopiée dans le dossier appli. */
+    /** La page WillRelais la plus récente : dossier appli (signée) ou celle intégrée à l'APK, recopiée dans le dossier appli. */
     byte[] wrBytes() {
         byte[] best = null; int bv = -1; File bf = null;
         File[] l = appDir().listFiles();
@@ -421,7 +422,7 @@ class Api {
             try { byte[] b = readAll(new FileInputStream(f)); int v = wrVersion(b); if (v > bv && signed(b)) { best = b; bv = v; bf = f; } } catch (Exception ignored) { }
         }
         byte[] emb = null;
-        try { emb = readAll(ctx.getAssets().open("page/winrelais.html")); } catch (Exception ignored) { }
+        try { emb = readAll(ctx.getAssets().open("page/willrelais.html")); } catch (Exception ignored) { }
         int ev = wrVersion(emb);
         if (emb != null && ev > bv) {
             try { importWr(emb); } catch (Exception ignored) { }
@@ -432,41 +433,74 @@ class Api {
     }
     int wrLocalVersion() { return wrVersion(wrBytes()); }
 
-    /** Installe une page WinRelais signée dans le dossier appli (winrelais-vN.html) ; les versions plus anciennes sont supprimées. */
+    /** Installe une page WillRelais signée dans le dossier appli (willrelais-vN.html) ; les versions plus anciennes sont supprimées. */
     String importWr(byte[] b) throws Exception {
-        if (!signed(b)) throw new Exception("page WinRelais non signée par l'auteur : refusée");
-        int v = wrVersion(b); if (v <= 0) throw new Exception("pas une page WinRelais");
+        if (!signed(b)) throw new Exception("page WillRelais non signée par l'auteur : refusée");
+        int v = wrVersion(b); if (v <= 0) throw new Exception("pas une page WillRelais");
         File d = appDir();
         if (!d.isDirectory() && !d.mkdirs()) throw new Exception("impossible de créer " + d.getAbsolutePath());
-        File f = new File(d, "winrelais-v" + v + ".html");
-        File tmp = new File(d, ".winrelais.part");
+        File f = new File(d, "willrelais-v" + v + ".html");
+        File tmp = new File(d, ".willrelais.part");
         try (OutputStream o = new FileOutputStream(tmp)) { o.write(b); }
         if (f.exists()) f.delete();
         if (!tmp.renameTo(f)) { tmp.delete(); throw new Exception("écriture impossible"); }
         File[] l = d.listFiles();
         if (l != null) for (File x : l) if (!x.equals(f) && x.isFile() && isWrName(x.getName()) && isHtml(x.getName())) {
-            try { if (wrVersion(readAll(new FileInputStream(x))) < v) x.delete(); } catch (Exception ignored) { }
+            try { if (wrVersion(readAll(new FileInputStream(x))) <= v) x.delete(); } catch (Exception ignored) { }
         }
         return f.getName();
     }
 
-    static final String WR_SHIM = "<script>(function(){var W=window.WrApi;if(!W)return;"
-            + "function b64(buf){var u=new Uint8Array(buf),s='',i;for(i=0;i<u.length;i+=32768)s+=String.fromCharCode.apply(null,u.subarray(i,i+32768));return btoa(s);}"
-            + "window.print=function(){W.print(document.title||'Schéma');};"
-            + "document.addEventListener('click',function(e){var a=e.target&&e.target.closest?e.target.closest('a[download]'):null;if(!a)return;e.preventDefault();e.stopPropagation();"
-            + "var n=a.getAttribute('download')||'fichier';fetch(a.href).then(function(r){return r.arrayBuffer();}).then(function(b){W.save(n,b64(b));}).catch(function(x){alert('Enregistrement impossible : '+x);});},true);"
-            + "window.__wrOpen=function(u,n){fetch(u).then(function(r){if(!r.ok)throw new Error('fichier introuvable');return r.arrayBuffer();}).then(function(b){var i=document.getElementById('file');"
-            + "var dt=new DataTransfer();dt.items.add(new File([b],n,{type:'application/octet-stream'}));i.files=dt.files;i.dispatchEvent(new Event('change'));}).catch(function(x){alert('Ouverture impossible : '+x.message);});};"
-            + "window.__appBack=function(){var l=document.getElementById('lib');if(l&&getComputedStyle(l).display!=='none'){l.style.display='none';return true;}return false;};"
-            + "})();</script>";
+    /* ---------- dossiers WillRelais : chemins relatifs à la mémoire interne (/storage/emulated/0), identiques sur les deux appareils ---------- */
+    static File ext() { return Environment.getExternalStorageDirectory(); }
+    SharedPreferences wsp() { return ctx.getSharedPreferences("willrelais", Context.MODE_PRIVATE); }
+    static boolean isWrFile(String n) { n = n.toLowerCase(); return n.endsWith(".xrs") || n.endsWith(".xsy") || n.endsWith("_nomenclature.csv"); }
+    /** Chemin relatif sûr (pas de .., pas de dossier caché, pas de Android/) → fichier ; null si refusé. */
+    static File extFile(String rel) {
+        if (rel == null) return null;
+        rel = rel.replace('\\', '/');
+        while (rel.startsWith("/")) rel = rel.substring(1);
+        while (rel.endsWith("/")) rel = rel.substring(0, rel.length() - 1);
+        if (rel.isEmpty()) return ext();
+        String[] parts = rel.split("/", -1);
+        if (parts.length > 12 || parts[0].equalsIgnoreCase("Android")) return null;
+        for (String x : parts) if (x.isEmpty() || x.equals(".") || x.equals("..") || x.startsWith(".") || x.contains("\u0000")) return null;
+        return new File(ext(), rel);
+    }
+    static String relOf(File f) {
+        String r = ext().getAbsolutePath(), a = f.getAbsolutePath();
+        return a.equals(r) ? "" : a.startsWith(r + "/") ? a.substring(r.length() + 1) : null;
+    }
+    String wrDefaultDir() { String r = relOf(new File(gi(), "WillRelais")); return r == null ? "Documents/Gestion interventions/WillRelais" : r; }
+    String wrCur() { String c = wsp().getString("cur", ""); return c.isEmpty() || extFile(c) == null ? wrDefaultDir() : c; }
+    /** Dossiers WillRelais connus (choisis ici ou sur l'autre appareil) : recopiés par la synchro. */
+    java.util.List<String> wrDirs() {
+        java.util.List<String> l = new java.util.ArrayList<>();
+        try { JSONArray a = new JSONArray(wsp().getString("dirs", "[]")); for (int i = 0; i < a.length(); i++) { String x = a.optString(i); if (extFile(x) != null && !x.isEmpty() && !l.contains(x)) l.add(x); } } catch (Exception ignored) { }
+        String d = wrDefaultDir(); if (!l.contains(d)) l.add(0, d);
+        return l;
+    }
+    synchronized void wrAddDirs(java.util.Collection<String> add) {
+        java.util.List<String> l = wrDirs(); boolean ch = false;
+        for (String x : add) { if (x == null) continue; x = x.replaceAll("/+$", ""); if (!x.isEmpty() && extFile(x) != null && !l.contains(x)) { l.add(x); ch = true; } }
+        if (ch) { JSONArray a = new JSONArray(); for (String x : l) a.put(x); wsp().edit().putString("dirs", a.toString()).apply(); }
+    }
+    void wrSetCur(String rel) { wsp().edit().putString("cur", rel).apply(); wrAddDirs(java.util.Collections.singletonList(rel)); }
+    /** Le dossier relatif est-il dans un dossier WillRelais connu ? */
+    boolean inWrDirs(String rel) {
+        for (String d : wrDirs()) if (rel.equals(d) || rel.startsWith(d + "/")) return true;
+        return false;
+    }
 
     WebResourceResponse wrPage() throws Exception {
         byte[] b = wrBytes();
         String t = b == null ? "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'><body style='font:16px sans-serif;padding:24px'>"
-                + "<h3>Schémas WinRelais</h3><p>Page absente du dossier " + appDir().getAbsolutePath() + ".</p><p>Installe-la avec « Ouvrir avec → Interventions » sur le fichier winrelais-vN.html, ou par la synchro avec l'autre appareil.</p>"
+                + "<h3>WillRelais</h3><p>Page absente du dossier " + appDir().getAbsolutePath() + ".</p><p>Installe-la avec « Ouvrir avec → Interventions » sur le fichier willrelais-vN.html, ou par la synchro avec l'autre appareil.</p>"
                 : new String(b, StandardCharsets.UTF_8);
+        String js = "";
+        try { js = new String(readAll(ctx.getAssets().open("page/willrelais-app.js")), StandardCharsets.UTF_8); } catch (Exception ignored) { }
         int i = t.indexOf("<head>");
-        String sh = SHIM + WR_SHIM;
+        String sh = SHIM + "<script>" + js + "</script>";
         t = i >= 0 ? t.substring(0, i + 6) + sh + t.substring(i + 6) : sh + t;
         return resp(200, "text/html", t.getBytes(StandardCharsets.UTF_8));
     }

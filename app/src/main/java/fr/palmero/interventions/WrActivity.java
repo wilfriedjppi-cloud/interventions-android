@@ -24,15 +24,16 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
-/** Schémas WinRelais : la page winrelais-vN.html du dossier appli, ouverte par son icône ou par « Ouvrir avec » sur un fichier .xrs. */
+/** WillRelais : la page willrelais-vN.html du dossier appli (schémas WinRelais .xrs), ouverte par son icône ou par « Ouvrir avec » sur un fichier .xrs. */
 public class WrActivity extends MainActivity {
 
-    @Override String startPath() { return "/winrelais.html"; }
+    @Override String startPath() { return "/willrelais.html"; }
 
     @Override void beforeLoad() {
         web.setBackgroundColor(Color.parseColor("#111827"));
         getWindow().setStatusBarColor(Color.parseColor("#1f2a37"));
         web.addJavascriptInterface(new WrBridge(), "WrApi");
+        new Thread(this::ensureSync, "wr-sync-start").start();   // l'autre appareil peut parcourir celui-ci même si Interventions est fermée
     }
 
     @Override void askPermissions() { }   // demandées par Interventions ; sans accès aux fichiers, l'enregistrement passe par « Partager »
@@ -40,6 +41,13 @@ public class WrActivity extends MainActivity {
     /** Bibliothèques de symboles en ligne (typonrelais.com) : chargées par l'appli, la page les reçoit sans blocage CORS. */
     @Override WebResourceResponse intercept(WebResourceRequest r) {
         Uri u = r.getUrl();
+        if (HOST.equals(u.getHost()) && "/wrfile".equals(u.getPath())) {   // fichier .xrs d'un dossier WillRelais, ouvert depuis le sélecteur de dossiers
+            try {
+                String rel = u.getQueryParameter("p"); File f = Api.extFile(rel);
+                if (f == null || !f.isFile() || !Api.isWrFile(f.getName())) return new WebResourceResponse("text/plain", "utf-8", 404, "Absent", new HashMap<>(), new java.io.ByteArrayInputStream(new byte[0]));
+                return new WebResourceResponse("application/octet-stream", null, 200, "OK", new HashMap<>(), new java.io.FileInputStream(f));
+            } catch (Exception e) { return null; }
+        }
         if (!"GET".equalsIgnoreCase(r.getMethod()) || !"https".equals(u.getScheme()) || u.getHost() == null || !u.getHost().endsWith("typonrelais.com")) return null;
         HttpURLConnection c = null;
         try {
@@ -84,31 +92,141 @@ public class WrActivity extends MainActivity {
         }
     }
 
+    /** Synchro avec l'autre appareil dès qu'un fichier ou un dossier WillRelais change (si la synchro est active dans Interventions). */
+    /** WillRelais ouvert seul (Interventions fermée) : la synchro démarre avec le code de jumelage déjà réglé dans Interventions. */
+    Sync ensureSync() {
+        Sync sy = MainActivity.syncer;
+        if (sy != null && !sy.token.isEmpty()) return sy;
+        android.content.SharedPreferences bs = getSharedPreferences("bisync", MODE_PRIVATE);
+        String code = bs.getString("code", "");
+        if (code.trim().length() < 4) return null;
+        synchronized (MainActivity.class) { if (MainActivity.syncer == null) MainActivity.syncer = new Sync(this, api); sy = MainActivity.syncer; }
+        try { if (sy.token.isEmpty()) sy.start(code, bs.getString("dev", ""), bs.getString("name", "")); } catch (Exception ignored) { }
+        return sy.token.isEmpty() ? null : sy;
+    }
+
+    static void syncSoon() {
+        final Sync sy = MainActivity.syncer;
+        if (sy == null || sy.token.isEmpty()) return;
+        new Thread(() -> { try { Thread.sleep(1500); sy.syncAll(null); } catch (Exception ignored) { } }, "wr-sync").start();
+    }
+
     class WrBridge {
-        /** Fichier produit par la page (.xrs enregistré, nomenclature .csv) : rangé dans « Gestion interventions/Schémas WinRelais » (recopié sur l'autre appareil par la synchro). */
+        /** État : dossier d'enregistrement courant et dossiers WillRelais connus (chemins relatifs à la mémoire interne). */
         @JavascriptInterface
-        public String save(String name, String b64) {
+        public String state() {
+            try {
+                JSONObject o = new JSONObject();
+                o.put("cur", api.wrCur()); o.put("def", api.wrDefaultDir()); o.put("dirs", new org.json.JSONArray(api.wrDirs()));
+                o.put("root", Api.ext().getAbsolutePath()); o.put("write", api.canWrite());
+                o.put("sync", MainActivity.syncer != null && !MainActivity.syncer.token.isEmpty());
+                return o.toString();
+            } catch (Exception e) { return "{}"; }
+        }
+
+        /** Contenu d'un dossier : sous-dossiers et fichiers WillRelais. */
+        @JavascriptInterface
+        public String ls(String rel) {
+            try {
+                File d = Api.extFile(rel); JSONObject o = new JSONObject();
+                o.put("path", d == null ? "" : Api.relOf(d)); o.put("exists", d != null && d.isDirectory());
+                org.json.JSONArray ds = new org.json.JSONArray(), fs = new org.json.JSONArray();
+                File[] l = d == null ? null : d.listFiles();
+                if (l != null) {
+                    java.util.Arrays.sort(l, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
+                    for (File f : l) {
+                        String n = f.getName(); if (n.startsWith(".")) continue;
+                        if (f.isDirectory()) { if (!(rel == null || rel.isEmpty()) || !n.equalsIgnoreCase("Android")) ds.put(n); }
+                        else if (Api.isWrFile(n)) fs.put(new JSONObject().put("name", n).put("size", f.length()).put("mtime", f.lastModified()));
+                    }
+                }
+                o.put("dirs", ds); o.put("files", fs); o.put("wr", d != null && api.inWrDirs(Api.relOf(d)));
+                return o.toString();
+            } catch (Exception e) { return "{\"dirs\":[],\"files\":[]}"; }
+        }
+
+        @JavascriptInterface
+        public String mkdir(String rel, String name) {
+            String n = Api.safeName(name).replace("/", " ").trim();
+            File d = Api.extFile(rel == null || rel.isEmpty() ? n : rel + "/" + n);
+            if (d == null || n.isEmpty() || n.startsWith(".")) return "";
+            return d.isDirectory() || d.mkdirs() ? Api.relOf(d) : "";
+        }
+
+        /** Dossier choisi : devient le dossier d'enregistrement et un dossier WillRelais (créé et recopié sur l'autre appareil). */
+        @JavascriptInterface
+        public boolean setDir(String rel) {
+            File d = Api.extFile(rel); if (d == null) return false;
+            if (!d.isDirectory() && !d.mkdirs()) return false;
+            api.wrSetCur(Api.relOf(d)); syncSoon(); return true;
+        }
+
+        /** Appels longs (autre appareil, recherche) : exécutés à part, résultat renvoyé à window.__wrCb(id, ok, texte). */
+        @JavascriptInterface
+        public void call(final int id, final String m, final String a, final String b) {
+            new Thread(() -> {
+                String res; boolean ok = true;
+                try {
+                    Sync sy = m.equals("lfind") ? null : ensureSync();
+                    if (!m.equals("lfind") && sy == null) throw new Exception("synchro entre appareils non réglée : choisis un code de jumelage dans Interventions (Réglages → Synchro)");
+                    switch (m) {
+                        case "lfind": res = new Sync(WrActivity.this, api).xfind(a, b).toString(); break;
+                        case "rls": res = sy.remote("/xls?p=" + java.net.URLEncoder.encode(a == null ? "" : a, "UTF-8")); break;
+                        case "rfind": res = sy.remote("/xfind?q=" + java.net.URLEncoder.encode(a == null ? "" : a, "UTF-8") + "&p=" + java.net.URLEncoder.encode(b == null ? "" : b, "UTF-8")); break;
+                        case "rget": {   // ouvrir un schéma de l'autre appareil (copie temporaire)
+                            String n = Api.safeName(a.substring(a.lastIndexOf('/') + 1));
+                            File dir = new File(getCacheDir(), "inbox"); dir.mkdirs();
+                            sy.remoteGet(a, new File(dir, n));
+                            res = new JSONObject().put("inbox", n).put("name", n).toString(); break;
+                        }
+                        case "rcopy": {  // recopier un fichier de l'autre appareil dans un dossier de celui-ci
+                            String n = Api.safeName(a.substring(a.lastIndexOf('/') + 1));
+                            File d = Api.extFile(b); if (d == null) throw new Exception("dossier refusé");
+                            File to = new File(d, n); sy.remoteGet(a, to);
+                            res = new JSONObject().put("rel", Api.relOf(to)).toString(); break;
+                        }
+                        default: throw new Exception("inconnu");
+                    }
+                } catch (Exception e) { ok = false; res = String.valueOf(e.getMessage()); }
+                final String js = "window.__wrCb&&window.__wrCb(" + id + "," + ok + "," + JSONObject.quote(res) + ")";
+                runOnUiThread(() -> { if (web != null) web.evaluateJavascript(js, null); });
+            }, "wr-call").start();
+        }
+
+        /** Enregistre un fichier produit par la page (.xrs, nomenclature .csv) dans le dossier choisi. */
+        @JavascriptInterface
+        public String saveTo(String rel, String name, String b64) {
             byte[] b = android.util.Base64.decode(b64 == null ? "" : b64, android.util.Base64.DEFAULT);
             String n = Api.safeName(name == null || name.isEmpty() ? "schema.xrs" : name);
+            File d = Api.extFile(rel == null ? api.wrCur() : rel);
             try {
-                File d = new File(api.gi(), "Schémas WinRelais");
-                if (!d.isDirectory() && !d.mkdirs()) throw new Exception("dossier");
+                if (d == null) throw new Exception("dossier refusé");
+                if (!d.isDirectory() && !d.mkdirs()) throw new Exception("dossier impossible à créer");
+                File f = new File(d, n), tmp = new File(d, "." + n + ".part");
+                try (OutputStream o = new FileOutputStream(tmp)) { o.write(b); }
+                if (f.exists()) f.delete();
+                if (!tmp.renameTo(f)) { tmp.delete(); throw new Exception("écriture"); }
+                api.wrSetCur(Api.relOf(d)); syncSoon();
+                runOnUiThread(() -> Toast.makeText(WrActivity.this, "Enregistré : " + f.getAbsolutePath(), Toast.LENGTH_LONG).show());
+                return Api.relOf(f);
+            } catch (Exception e) { runOnUiThread(() -> Toast.makeText(WrActivity.this, "Enregistrement impossible : " + e.getMessage() + (api.canWrite() ? "" : " (autorise « Gestion de tous les fichiers » pour Interventions)"), Toast.LENGTH_LONG).show()); return ""; }
+        }
+
+        /** Partage d'un fichier produit (mail, Drive…) sans l'enregistrer dans un dossier. */
+        @JavascriptInterface
+        public String share(String name, String b64) {
+            try {
+                byte[] b = android.util.Base64.decode(b64 == null ? "" : b64, android.util.Base64.DEFAULT);
+                String n = Api.safeName(name == null || name.isEmpty() ? "schema.xrs" : name);
+                File d = new File(getCacheDir(), "share"); d.mkdirs();
                 File f = new File(d, n);
                 try (OutputStream o = new FileOutputStream(f)) { o.write(b); }
-                runOnUiThread(() -> Toast.makeText(WrActivity.this, "Enregistré : " + f.getAbsolutePath(), Toast.LENGTH_LONG).show());
-                return f.getAbsolutePath();
-            } catch (Exception e) {   // pas d'accès aux dossiers : partage du fichier
-                try {
-                    File d = new File(getCacheDir(), "share"); d.mkdirs();
-                    File f = new File(d, n);
-                    try (OutputStream o = new FileOutputStream(f)) { o.write(b); }
-                    Uri su = FileProvider.getUriForFile(WrActivity.this, getPackageName() + ".files", f);
-                    Intent s = new Intent(Intent.ACTION_SEND).setType(n.toLowerCase().endsWith(".csv") ? "text/csv" : "application/octet-stream")
-                            .putExtra(Intent.EXTRA_STREAM, su).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                    runOnUiThread(() -> startActivity(Intent.createChooser(s, "Enregistrer " + n)));
-                    return "partage";
-                } catch (Exception e2) { return ""; }
-            }
+                Uri su = FileProvider.getUriForFile(WrActivity.this, getPackageName() + ".files", f);
+                Intent s = new Intent(Intent.ACTION_SEND).setType(n.toLowerCase().endsWith(".csv") ? "text/csv" : "application/octet-stream")
+                        .putExtra(Intent.EXTRA_STREAM, su).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                runOnUiThread(() -> startActivity(Intent.createChooser(s, "Envoyer " + n)));
+                return "ok";
+            } catch (Exception e) { return ""; }
         }
 
         /** « PDF / Imprimer » : impression Android (choix « Enregistrer au format PDF » possible). */
