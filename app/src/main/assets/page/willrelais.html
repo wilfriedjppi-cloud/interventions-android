@@ -1,5 +1,5 @@
-<!doctype html><!-- interventions-sig: MEYCIQCsoEVaxddzqLucxHeljdY66QR2dZUlK17fbhZNUf0hhAIhANxdpbcYqW9gpWLD4oFpDwFtSeLt0cq65QOrVlqv6LrA -->
-<!-- willrelais-version: 9 -->
+<!doctype html><!-- interventions-sig: MEQCIFVoleUuowU+o6iexFob9qgrqRlagR+yu3k15QqNnkXkAiA9VKcSLkhKCF7hZcTDsyvoPomiA2VQRj590RVtMYi78w== -->
+<!-- willrelais-version: 10 -->
 <html lang="fr">
 <head>
 <meta charset="utf-8">
@@ -196,11 +196,11 @@ function symG(blocks,o={}){
   for(const l of (blocks.Arc?.lines||[])){if(!l)continue;const f=F(l);g.push(`<path d="${arcPath(num(f[0]),num(f[1]),num(f[2]),num(f[3]),num(f[4]))}" fill="none" stroke="${col(f[6])}" stroke-width="${o.thumb?Math.max(swd(f[5]),20):swd(f[5])}"${dsh(f[7])}/>`);}
   for(const l of (blocks.ZoneDessin?.lines||[])){if(!l)continue;const f=F(l);const p=[];for(let i=6;i+1<f.length;i+=2)if(f[i]!==''&&f[i+1]!=='')p.push(f[i]+','+f[i+1]);if(p.length>2)g.push(`<polygon points="${p.join(' ')}" fill="none" stroke="#000" stroke-width="${o.thumb?20:12}"/>`);}
   const shp=F(blocks.Autre?.lines?.[1]||'')[5]==='1';   // en-tête du symbole, champ 5 : n° de bornes affichés
-  for(const l of (blocks.Broche?.lines||[])){if(!l)continue;const f=F(l);const e=pinEnd(f);
+  (blocks.Broche?.lines||[]).forEach((l,pi)=>{if(!l)return;const f=F(l);const e=pinEnd(f);
     g.push(`<line x1="${f[1]}" y1="${f[2]}" x2="${e[0]}" y2="${e[1]}" stroke="#000" stroke-width="${o.thumb?20:12}" stroke-linecap="round"/>`);
-    if(!o.thumb){ g.push(connMark(num(f[1]),num(f[2]))); if(shp&&f[0].trim()!==''&&o.labels!==false) g.push(txt(f[5],f[6],f[0],pinSize(f),0,0,'#000')); } }
+    if(!o.thumb){ g.push(connMark(num(f[1]),num(f[2]))); if(shp&&f[0].trim()!==''&&o.labels!==false) g.push(txt(f[5],f[6],f[0],pinSize(f),0,0,'#000',o.edit?`pl:${o.si}:${pi}`:'')); } });
   if(!o.thumb) (blocks.MDessin?.lines||[]).forEach(l=>{ if(!l)return; const f=F(l); g.push(txt(num(f[1]),num(f[2]),f[5],num(f[4],400),6,0,'#000')); });   // textes dessinés du symbole (ex. « M » « 3 ~ » d'un moteur)
-  if(!o.thumb) (blocks.Autre?.lines||[]).slice(2).forEach(l=>{ if(!l)return; const f=F(l); if(f[3]!=='1')return; g.push(txt(f[1],f[2],f[0],num(f[6],300),num(f[4]),0,'#000','',num(f[7])));});
+  if(!o.thumb) (blocks.Autre?.lines||[]).slice(2).forEach((l,ti)=>{ if(!l)return; const f=F(l); if(f[3]!=='1')return; g.push(txt(f[1],f[2],f[0],num(f[6],300),num(f[4]),0,'#000',o.edit?`st:${o.si}:${ti+2}`:'',num(f[7])));});
   return g;
 }
 function symFolio(s){ const h=F(s.blocks.Autre.lines[1]); return num(h[8]); }
@@ -250,7 +250,7 @@ function folioSVG(M,n,opts={}){
     const k=`s:${si}`; const bb=symBBox(s); const g=[];
     g.push(`<g data-k="${k}">`);
     g.push(`<rect x="${bb[0]-60}" y="${bb[1]-60}" width="${bb[2]-bb[0]+120}" height="${bb[3]-bb[1]+120}" fill="transparent"/>`);
-    g.push(...symG(s.blocks));
+    g.push(...symG(s.blocks,{si,edit:opts.edit}));
     g.push('</g>');
     out.push(g.join(''));
   });
@@ -303,6 +303,8 @@ function selOverlay(){
       [0,2].map(i=>`<circle cx="${f[i]}" cy="${f[i+1]}" r="110" fill="#2563eb" stroke="#fff" stroke-width="20" data-h="${i}"/>`).join('');}
   else if(k[0]==='j'){const f=F(M.g.Jonction.lines[+k[1]]);o=`<circle cx="${f[0]}" cy="${f[1]}" r="140" fill="none" stroke="#2563eb" stroke-width="30"/>`;}
   else if(k[0]==='p'&&window.__wlPhotoSel){o=window.__wlPhotoSel(+k[1]);}
+  else if(k[0]==='st'||k[0]==='pl'){ const f=F(lineOf(sel)); const x=num(f[k[0]==='st'?1:5]), y=num(f[k[0]==='st'?2:6]); o=`<circle cx="${x}" cy="${y}" r="80" fill="#2563eb"/><rect x="${x-60}" y="${y-60}" width="${Math.max(300,String(f[0]).length*(k[0]==='st'?num(f[6],300):pinSize(f))*0.62)+120}" height="${(k[0]==='st'?num(f[6],300):pinSize(f))+120}" fill="none" stroke="#2563eb" stroke-width="20" stroke-dasharray="80 50" pointer-events="none"/>`; }
+  else if(k[0]==='g'&&window.__wlGroupSel){ o=window.__wlGroupSel(); }
   else { const ln=lineOf(sel); if(ln){const f=F(ln); const sz=num(f[k[0]==='n'?6:7],300); o=`<circle cx="${f[0]}" cy="${f[1]}" r="90" fill="#2563eb"/>`;} }
   return o;
 }
@@ -315,6 +317,8 @@ function lineOf(key){
     case 't': return M.g.Texte.lines[+k[1]];
     case 'ds': return M.g.DSansTexte.lines[+k[1]];
     case 'ct': return M.folios[+k[1]].blocks.CartoucheTexte.lines[+k[2]];
+    case 'st': return M.syms[+k[1]].blocks.Autre.lines[+k[2]];
+    case 'pl': return M.syms[+k[1]].blocks.Broche.lines[+k[2]];
   }
 }
 function setLine(key,fields){
@@ -326,6 +330,8 @@ function setLine(key,fields){
     case 't': M.g.Texte.lines[+k[1]]=s;break;
     case 'ds': M.g.DSansTexte.lines[+k[1]]=s;break;
     case 'ct': M.folios[+k[1]].blocks.CartoucheTexte.lines[+k[2]]=s;break;
+    case 'st': M.syms[+k[1]].blocks.Autre.lines[+k[2]]=s;break;
+    case 'pl': M.syms[+k[1]].blocks.Broche.lines[+k[2]]=s;break;
   }
 }
 /* équipotentiel d'un fil */
@@ -384,6 +390,18 @@ function renderInsp(){
     const f=F(lineOf(sel)); h=`<h4>Jonction</h4>`+row('x,y',`<input type="number" data-f="0" value="${f[0]}"><input type="number" data-f="1" value="${f[1]}">`);
   } else if(k[0]==='ds'){
     const f=F(lineOf(sel)); h=`<h4>Dessin</h4>`+row('Point 1',`<input type="number" data-f="0" value="${f[0]}"><input type="number" data-f="1" value="${f[1]}">`)+row('Point 2',`<input type="number" data-f="2" value="${f[2]}"><input type="number" data-f="3" value="${f[3]}">`);
+  } else if(k[0]==='g'){
+    h=window.__wlGroupInsp?window.__wlGroupInsp():'';
+  } else if(k[0]==='st'){
+    const f=F(lineOf(sel)); const s0=M.syms[+k[1]]; const rep=F(s0.blocks.Autre.lines[2])[0];
+    h=`<h4>Texte du symbole ${esc(rep)}</h4>`+row('Texte',`<input type="text" data-f="0" value="${esc(f[0])}">`)+row('Taille',`<input type="number" data-f="6" value="${f[6]||300}">`)+
+      row('Position x,y',`<input type="number" data-f="1" value="${f[1]}"><input type="number" data-f="2" value="${f[2]}">`)+
+      row('',`<label style="flex:1;display:flex;gap:8px;align-items:center;color:#111"><input type="checkbox" id="istv" ${f[3]==='1'?'checked':''} style="width:22px;height:22px"> Affiché</label>`);
+  } else if(k[0]==='pl'){
+    const f=F(lineOf(sel)); const s0=M.syms[+k[1]]; const rep=F(s0.blocks.Autre.lines[2])[0]; const sd=pinSide(f);
+    h=`<h4>N° de borne — ${esc(rep)}</h4>`+row('Texte',`<input type="text" data-f="0" value="${esc(f[0])}">`)+row('Taille',`<input type="number" data-f="13" value="${pinSize(f)}">`)+
+      row('Position',`<select id="iplp" style="flex:1">${[['','—'],['h','en haut'],['b','en bas'],['g','à gauche'],['d','à droite']].map(o=>`<option value="${o[0]}"${o[0]===sd?' selected':''}>${o[1]}</option>`).join('')}</select>`)+
+      row('Position x,y',`<input type="number" data-f="5" value="${f[5]}"><input type="number" data-f="6" value="${f[6]}">`);
   } else if(k[0]==='p'){
     h=window.__wlPhotoInsp?window.__wlPhotoInsp(+k[1]):'';
   } else { // t, n, ct
@@ -399,6 +417,9 @@ function renderInsp(){
     else {const f=F(lineOf(sel));f[idx]=v;setLine(sel,f);} redraw();});
   el.querySelectorAll('[data-c]').forEach(i=>i.onchange=()=>{snapshot();const v=i.value;const c=String(parseInt(v.slice(5,7)+v.slice(3,5)+v.slice(1,3),16));
     for(const w of wires()){const f=F(M.g.FilBus.lines[w]);f[+i.dataset.c]=c;M.g.FilBus.lines[w]=J(f);} redraw();});
+  if(k[0]==='st'){ const c=el.querySelector('#istv'); c.onchange=()=>{snapshot();const f=F(lineOf(sel));f[3]=c.checked?'1':'0';setLine(sel,f);redraw();}; }
+  if(k[0]==='pl'){ const c=el.querySelector('#iplp'); c.onchange=()=>{ if(!c.value) return; snapshot();const f=F(lineOf(sel));pinPlace(f,c.value);setLine(sel,f);redraw();}; }
+  if(k[0]==='g'&&window.__wlGroupInspBind) window.__wlGroupInspBind(el);
   if(k[0]!=='s'){ if(k[0]==='p'&&window.__wlPhotoInspBind) window.__wlPhotoInspBind(el,+k[1]); return; }
   const s=M.syms[+k[1]];
   const ed=(blk,idx,fn)=>{snapshot();const f=F(blk.lines[idx]);fn(f);blk.lines[idx]=J(f);redraw();};
@@ -463,7 +484,7 @@ function shiftSym(s,dx,dy){
 }
 function shiftLine(key,dx,dy){
   const f=F(lineOf(key)); const k=key.split(':')[0];
-  const pairs=k==='w'||k==='ds'?[0,2]:[0];
+  const pairs=k==='w'||k==='ds'?[0,2]:k==='st'?[1]:k==='pl'?[5]:[0];
   for(const p of pairs){f[p]=String(num(f[p])+dx);f[p+1]=String(num(f[p+1])+dy);}
   setLine(key,f);
 }
@@ -475,11 +496,12 @@ svg.addEventListener('pointerdown',e=>{
   if(ptrs.size===2){if(drag&&drag.tm)clearTimeout(drag.tm);drag=null;const [a,b]=[...ptrs.values()];pinch={d:Math.hypot(a.x-b.x,a.y-b.y),v:{...view},cx:(a.x+b.x)/2,cy:(a.y+b.y)/2};return;}
   const t=e.target.closest('[data-k]'); const h=e.target.dataset?.h;
   const p=toDoc(e);
+  if(tool==='box'){drag={type:'box',sx:e.clientX,sy:e.clientY,moved:false,p0:p,p1:p};return;}
   if(tool!=='sel'){drag={type:'tool',sx:e.clientX,sy:e.clientY,moved:false,p};return;}
   if(h!==undefined&&sel){drag={type:'handle',h:h==='ph'?h:+h,moved:false,snap:false,sx:e.clientX,sy:e.clientY};return;}
   if(t){const k=t.dataset.k; const d0={type:'press',k,sx:e.clientX,sy:e.clientY,cx:e.clientX,cy:e.clientY,lp:p,v:{...view},moved:false};
     d0.tm=setTimeout(()=>{ if(drag!==d0) return; sel=d0.k; redraw(); try{navigator.vibrate&&navigator.vibrate(12);}catch(x){}
-      drag={type:'item',sx:d0.cx,sy:d0.cy,last:null,acc:{x:0,y:0},moved:false,pins:(sel[0]==='s'&&follow)?symPins(M.syms[+sel.split(':')[1]]):null}; },LONGP);
+      drag={type:'item',sx:d0.cx,sy:d0.cy,last:null,acc:{x:0,y:0},moved:false,pins:(sel.startsWith('s:')&&follow)?symPins(M.syms[+sel.split(':')[1]]):null}; },LONGP);
     drag=d0; }
   else drag={type:'pan',sx:e.clientX,sy:e.clientY,v:{...view},moved:false};
 });
@@ -495,11 +517,12 @@ svg.addEventListener('pointermove',e=>{
     clearTimeout(drag.tm); drag={type:'pan',sx:drag.sx,sy:drag.sy,v:drag.v,moved:false}; }
   const dx=e.clientX-drag.sx, dy=e.clientY-drag.sy; if(!drag.moved&&Math.hypot(dx,dy)<5) return;
   if(!drag.moved){drag.moved=true; if(drag.type==='item'||drag.type==='handle') snapshot();}
+  if(drag.type==='box'){ drag.p1=toDoc(e); const a=drag.p0,b=drag.p1; const ov=svg.querySelector('#ov'); if(ov) ov.innerHTML=`<rect x="${Math.min(a.x,b.x)}" y="${Math.min(a.y,b.y)}" width="${Math.abs(b.x-a.x)}" height="${Math.abs(b.y-a.y)}" fill="#2563eb" fill-opacity=".08" stroke="#2563eb" stroke-width="25" stroke-dasharray="120 60" pointer-events="none"/>`; return; }
   if(drag.type==='pan'){const r=svg.getBoundingClientRect();const sc=Math.max(drag.v.w/r.width,drag.v.h/r.height);view={...drag.v,x:drag.v.x-dx*sc,y:drag.v.y-dy*sc};setView();}
   else if(drag.type==='item'){
     const p=toDoc(e); if(!drag.last){ drag.last={x:p.x,y:p.y}; return; } drag.acc.x+=p.x-drag.last.x; drag.acc.y+=p.y-drag.last.y; drag.last={x:p.x,y:p.y};
     const g=G()||1; const mx=Math.round(drag.acc.x/g)*g, my=Math.round(drag.acc.y/g)*g;
-    if(mx||my){ if(sel[0]==='s'){ shiftSym(M.syms[+sel.split(':')[1]],mx,my); if(drag.pins) followWires(drag.pins,mx,my); } else if(sel[0]==='p'){ const ph=M.doc.photos[+sel.split(':')[1]]; ph.x+=mx; ph.y+=my; } else shiftLine(sel,mx,my); drag.acc.x-=mx; drag.acc.y-=my; redrawKeep(); }
+    if(mx||my){ if(sel.startsWith('s:')){ shiftSym(M.syms[+sel.split(':')[1]],mx,my); if(drag.pins) followWires(drag.pins,mx,my); } else if(sel.startsWith('p:')){ const ph=M.doc.photos[+sel.split(':')[1]]; ph.x+=mx; ph.y+=my; } else if(sel[0]==='g'){ window.__wlGroupMove(mx,my); } else shiftLine(sel,mx,my); drag.acc.x-=mx; drag.acc.y-=my; redrawKeep(); }
   } else if(drag.type==='handle'&&drag.h==='ph'){
     const p=toDoc(e); window.__wlPhotoResize(+sel.split(':')[1],p); redrawKeep();
   } else if(drag.type==='handle'){
@@ -513,6 +536,7 @@ function endPtr(e){
   if(ptrs.size<2) pinch=null;
   if(drag&&ptrs.size===0){
     if(drag.type==='press'){ clearTimeout(drag.tm); if(sel&&drag.k!==sel){sel=null;redraw();} drag=null; return; }
+    if(drag.type==='box'){ const a=drag.p0,b=drag.p1; drag=null; tool='sel'; sel=(drag===null&&window.__wlGroupMake&&window.__wlGroupMake(Math.min(a.x,b.x),Math.min(a.y,b.y),Math.max(a.x,b.x),Math.max(a.y,b.y)))?'g:0':null; redraw(); return; }
     if(drag.type==='tool'&&!drag.moved) toolTap(drag.p);
     if(drag.type==='pan'&&!drag.moved&&sel){sel=null;redraw();}
     if((drag.type==='item'||drag.type==='handle')&&drag.moved) redraw();
@@ -543,6 +567,9 @@ $('bDel').onclick=()=>{ if(!sel) return; const k=sel.split(':'); snapshot();
   if(k[0]==='s'){ const i=+k[1]; const s=M.syms[i]; const bl=M.doc.blocks; const a=bl.indexOf(s.head), b=bl.indexOf(s.fin); bl.splice(a,b-a+1); renumSyms(); }
   else if(k[0]==='ct'){ setLine(sel,F(lineOf(sel)).map((v,i)=>i===2?'':v)); }
   else if(k[0]==='p'){ M.doc.photos.splice(+k[1],1); }
+  else if(k[0]==='g'){ window.__wlGroupDelete(); }
+  else if(k[0]==='st'){ setLine(sel,F(lineOf(sel)).map((v,i)=>i===3?'0':v)); }
+  else if(k[0]==='pl'){ const a=M.syms[+k[1]].blocks.Autre,f=F(a.lines[1]); f[5]='0'; a.lines[1]=J(f); }
   else { const B={w:'FilBus',j:'Jonction',n:'Numero',t:'Texte',ds:'DSansTexte'}[k[0]]; M.g[B].lines.splice(+k[1],1); }
   M=buildModel(M.doc); sel=null; redraw(); if(window.__wlChanged) window.__wlChanged(); };
 function renumSyms(){ let n=0; for(const b of M.doc.blocks){ if(/^Symbole·\d+$/.test(b.name)) b.name='Symbole·'+(n++); } const c=M.doc.blocks.find(b=>b.name==='NombreSymbole'); if(c) c.lines[0]=n+SEP; }
@@ -925,6 +952,44 @@ initLib();
     return JSON.stringify({format:'willrelais-photos/1',photos:L,data}); };
   window.__wlOpened=(name)=>{ M.doc.hadSide=false; if(!window.__wlLoadSide) return; const t=window.__wlLoadSide(name); if(!t) return;
     try{ const o=JSON.parse(t); for(const id in (o.data||{})) PHD[id]=o.data[id]; M.doc.photos=(o.photos||[]).filter(p=>p&&p.id); M.doc.hadSide=true; redraw(); }catch(e){} };
+
+  /* ---------- sélection par zone : tout ce qui est dans le cadre se déplace ou se supprime ensemble ---------- */
+  let GRP=null;
+  const inR=(x,y)=>x>=GRP.x0&&x<=GRP.x1&&y>=GRP.y0&&y<=GRP.y1;
+  window.__wlGroupMake=(x0,y0,x1,y1)=>{
+    if(x1-x0<50||y1-y0<50) return false;
+    GRP={x0,y0,x1,y1,syms:[],wires:[],jon:[],txt:[],num:[],ds:[],ph:[]}; const n=cur;
+    M.syms.forEach((s,i)=>{ if(symFolio(s)!==n) return; const b=symBBox(s); if(inR(b[0],b[1])&&inR(b[2],b[3])) GRP.syms.push(i); });
+    (M.g.FilBus?.lines||[]).forEach((l,i)=>{ if(!l) return; const f=F(l); if(num(f[4])!==n) return; const e=[0,2].filter(j=>inR(num(f[j]),num(f[j+1]))); if(e.length) GRP.wires.push([i,e]); });
+    (M.g.Jonction?.lines||[]).forEach((l,i)=>{ if(!l) return; const f=F(l); if(num(f[2])===n&&inR(num(f[0]),num(f[1]))) GRP.jon.push(i); });
+    (M.g.Texte?.lines||[]).forEach((l,i)=>{ if(!l) return; const f=F(l); if(num(f[4])===n&&inR(num(f[0]),num(f[1]))) GRP.txt.push(i); });
+    (M.g.Numero?.lines||[]).forEach((l,i)=>{ if(!l) return; const f=F(l); if(num(f[3])===n&&inR(num(f[0]),num(f[1]))) GRP.num.push(i); });
+    (M.g.DSansTexte?.lines||[]).forEach((l,i)=>{ if(!l) return; const f=F(l); if(num(f[5])===n&&inR(num(f[0]),num(f[1]))&&inR(num(f[2]),num(f[3]))) GRP.ds.push(i); });
+    (M.doc.photos||[]).forEach((p,i)=>{ if(p.f===n&&inR(p.x,p.y)&&inR(p.x+p.w,p.y+p.h)) GRP.ph.push(i); });
+    const c=GRP.syms.length+GRP.wires.length+GRP.jon.length+GRP.txt.length+GRP.num.length+GRP.ds.length+GRP.ph.length;
+    if(!c){ GRP=null; return false; } GRP.count=c; return true;
+  };
+  window.__wlGroupSel=()=>{ if(!GRP) return ''; const w=GRP.x1-GRP.x0,h=GRP.y1-GRP.y0;
+    return `<rect x="${GRP.x0}" y="${GRP.y0}" width="${w}" height="${h}" fill="#2563eb" fill-opacity=".06" stroke="#2563eb" stroke-width="30" stroke-dasharray="140 70" data-k="g:0"/>`; };
+  const mvL=(B,i,pairs,dx,dy)=>{ const f=F(M.g[B].lines[i]); for(const p of pairs){f[p]=String(num(f[p])+dx);f[p+1]=String(num(f[p+1])+dy);} M.g[B].lines[i]=J(f); };
+  window.__wlGroupMove=(dx,dy)=>{ if(!GRP) return;
+    GRP.syms.forEach(i=>shiftSym(M.syms[i],dx,dy));
+    GRP.wires.forEach(([i,e])=>mvL('FilBus',i,e,dx,dy));
+    GRP.jon.forEach(i=>mvL('Jonction',i,[0],dx,dy)); GRP.txt.forEach(i=>mvL('Texte',i,[0],dx,dy)); GRP.num.forEach(i=>mvL('Numero',i,[0],dx,dy)); GRP.ds.forEach(i=>mvL('DSansTexte',i,[0,2],dx,dy));
+    GRP.ph.forEach(i=>{const p=M.doc.photos[i]; p.x+=dx; p.y+=dy;});
+    GRP.x0+=dx; GRP.x1+=dx; GRP.y0+=dy; GRP.y1+=dy; };
+  window.__wlGroupDelete=()=>{ if(!GRP) return;
+    const del=(B,idx)=>{ [...idx].sort((a,b)=>b-a).forEach(i=>M.g[B].lines.splice(i,1)); };
+    del('FilBus',GRP.wires.filter(([i,e])=>e.length===2).map(([i])=>i)); del('Jonction',GRP.jon); del('Texte',GRP.txt); del('Numero',GRP.num); del('DSansTexte',GRP.ds);
+    [...GRP.ph].sort((a,b)=>b-a).forEach(i=>M.doc.photos.splice(i,1));
+    const bl=M.doc.blocks; [...GRP.syms].sort((a,b)=>b-a).forEach(i=>{ const s=M.syms[i]; const a=bl.indexOf(s.head), b=bl.indexOf(s.fin); if(a>=0&&b>=a) bl.splice(a,b-a+1); });
+    if(GRP.syms.length) renumSyms(); GRP=null; };
+  window.__wlGroupInsp=()=>{ if(!GRP) return ''; const t=[[GRP.syms.length,'symbole(s)'],[GRP.wires.length,'fil(s)'],[GRP.txt.length+GRP.num.length,'texte(s)'],[GRP.jon.length,'jonction(s)'],[GRP.ds.length,'trait(s)'],[GRP.ph.length,'photo(s)']].filter(x=>x[0]).map(x=>x[0]+' '+x[1]).join(', ');
+    return `<h4>Sélection : ${GRP.count} objet(s)</h4><div style="color:#374151;font-size:13px">${t}.<br>Appui long dans le cadre puis glisser pour tout déplacer. « Supprimer » enlève la sélection (les fils qui sortent du cadre sont gardés et suivent).</div>`; };
+  window.__wlGroupInspBind=()=>{};
+  /* outil « ⬚ Zone » : tracer un cadre au doigt */
+  const tz=document.createElement('button'); tz.dataset.tool='box'; tz.textContent='⬚ Zone'; tz.title='Sélectionner une zone : tout ce qui est dedans';
+  tz.onclick=()=>{ tool='box'; pending=null; sel=null; redraw(); }; document.querySelector('#tools [data-tool="sel"]').after(tz);
 
   /* ---------- bibliothèque de symboles : copie dans le dossier WillRelais ---------- */
   let lt=null, lastLib='';
