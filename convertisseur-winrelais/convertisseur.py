@@ -45,6 +45,11 @@ ALIAS = {
 
 GRID = 200          # 2 mm : pas de la grille WinRelais
 
+CLES_RACINE = {"societe", "adresse", "dessinateur", "date", "titre_dessin", "folios"}
+CLES_FOLIO = {"titre", "composants", "liaisons", "fils", "jonctions", "reperes",
+              "textes", "cadres"}
+CLES_COMPOSANT = {"type", "ref", "id", "x", "y", "textes", "broches", "famille", "prefixe"}
+
 # Caractères typographiques courants absents du Latin-1 -> équivalents simples
 SUBST = {
     "\u2014": "-", "\u2013": "-", "\u2011": "-", "\u2012": "-", "\u2212": "-",
@@ -109,6 +114,9 @@ def convert(data, biblio=None, snap=True):
         raise ConversionError("JSON invalide : clé « folios » absente ou vide.")
     seen = {}
     data = _clean(data, seen)
+    inconnues = sorted(set(data) - CLES_RACINE)
+    if inconnues:
+        warns.append("clés ignorées à la racine : %s" % ", ".join(inconnues))
     for ch, rep in seen.items():
         warns.append("caractère %r (U+%04X) remplacé par %r (non supporté par WinRelais)"
                      % (ch, ord(ch), rep))
@@ -127,6 +135,22 @@ def convert(data, biblio=None, snap=True):
         b.add_folio(fol.get("titre", "Folio %d" % (fi + 1)))
         where = "folio %d" % (fi + 1)
         placed = {}                                  # id -> Symbol
+        if not isinstance(fol, dict):
+            errs.append("%s : doit être un objet JSON" % where)
+            continue
+        inc = sorted(set(fol) - CLES_FOLIO)
+        if inc:
+            warns.append("%s : clés ignorées : %s" % (where, ", ".join(inc)))
+        for c in fol.get("composants", []):
+            if isinstance(c, dict):
+                inc = sorted(set(c) - CLES_COMPOSANT)
+                if inc:
+                    warns.append("%s, composant %s : clés ignorées : %s"
+                                 % (where, c.get("ref", "?"), ", ".join(inc)))
+                    break
+        if not any(fol.get(k) for k in ("composants", "liaisons", "fils", "textes",
+                                       "reperes", "jonctions", "cadres")):
+            warns.append("%s : aucun élément reconnu (folio vide)" % where)
 
         # ---- composants --------------------------------------------------
         for c in fol.get("composants", []):
@@ -210,6 +234,11 @@ def convert(data, biblio=None, snap=True):
 
     if errs:
         raise ConversionError("\n".join(errs))
+    if not b.symbols and not b.wires:
+        raise ConversionError(
+            "Rien à convertir : aucun composant ni fil reconnu.\n"
+            "Clés attendues par folio : composants, liaisons, fils, jonctions, reperes, "
+            "textes, cadres (voir LISEZMOI.txt).\n" + "\n".join(warns))
     return b.build(), warns
 
 
