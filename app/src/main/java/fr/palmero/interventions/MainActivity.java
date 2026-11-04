@@ -102,6 +102,7 @@ public class MainActivity extends Activity {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest r) {
                 Uri u = r.getUrl();
+                WebResourceResponse x = intercept(r); if (x != null) return x;
                 if (HOST.equals(u.getHost())) return api.serve(r);
                 if ("GET".equalsIgnoreCase(r.getMethod())) return api.cdn(r);
                 return null;
@@ -149,10 +150,16 @@ public class MainActivity extends Activity {
         });
 
         hadAllFiles = api.canWrite();
+        beforeLoad();
         handleIntent(getIntent());
         askPermissions();
-        web.loadUrl(ORIGIN + "/index.html");
+        web.loadUrl(ORIGIN + startPath());
     }
+
+    /** Page de départ (WrActivity : schémas WinRelais). */
+    String startPath() { return "/index.html"; }
+    WebResourceResponse intercept(WebResourceRequest r) { return null; }
+    void beforeLoad() { }
 
     /* ---------- autorisations ---------- */
     void askPermissions() {
@@ -198,17 +205,19 @@ public class MainActivity extends Activity {
     /* ---------- choix de fichiers et appareil photo ---------- */
     Intent chooser(WebChromeClient.FileChooserParams p) {
         Set<String> mimes = new LinkedHashSet<>();
+        boolean anyExt = false;   // extension inconnue d'Android (.xrs, .xsy…) : tous les fichiers proposés
         String[] acc = p.getAcceptTypes();
         if (acc != null) for (String a0 : acc) for (String a : a0.split(",")) {
             a = a.trim().toLowerCase();
             if (a.isEmpty()) continue;
             if (a.startsWith(".")) {
                 String m = MimeTypeMap.getSingleton().getMimeTypeFromExtension(a.substring(1));
-                if (m != null) mimes.add(m); else if (a.equals(".bck") || a.equals(".ndf")) mimes.add("application/octet-stream");
+                if (m != null) mimes.add(m); else if (a.equals(".bck") || a.equals(".ndf")) mimes.add("application/octet-stream"); else anyExt = true;
             } else mimes.add(a);
         }
-        boolean image = mimes.isEmpty();
+        boolean image = mimes.isEmpty() && !anyExt;
         for (String m : mimes) if (m.startsWith("image")) image = true;
+        if (anyExt) mimes.clear();
 
         Intent pick = new Intent(Intent.ACTION_GET_CONTENT);
         pick.addCategory(Intent.CATEGORY_OPENABLE);
@@ -439,6 +448,17 @@ public class MainActivity extends Activity {
                 final byte[] b;
                 try (InputStream in = getContentResolver().openInputStream(u)) { b = Api.readAll(in); }
                 if (!Api.signed(b)) { new AlertDialog.Builder(this).setTitle("Page refusée").setMessage("« " + name + " » n'est pas signée par l'auteur d'Interventions : page modifiée ou non officielle.\n\nPar sécurité, seules les pages officielles sont installées.").setPositiveButton("OK", null).show(); return; }
+                if (Api.isWrPage(b)) {   // page « Schémas WinRelais » : rangée dans le dossier appli, à côté de la page Interventions
+                    int wv = Api.wrVersion(b), lv = api.wrLocalVersion();
+                    new AlertDialog.Builder(this).setTitle("Schémas WinRelais")
+                            .setMessage((lv > 0 ? "Page reçue : v" + wv + " (actuelle : v" + lv + ").\n\n" : "") + "L'installer dans " + api.appDir().getAbsolutePath() + " ?")
+                            .setPositiveButton("Installer", (d, w) -> {
+                                try { String n = api.importWr(b); Toast.makeText(this, "Installée : " + n, Toast.LENGTH_LONG).show(); openWr(); }
+                                catch (Exception e) { Toast.makeText(this, "Installation impossible : " + e.getMessage(), Toast.LENGTH_LONG).show(); }
+                            })
+                            .setNegativeButton("Annuler", null).show();
+                    return;
+                }
                 int nv = Api.pageVersion(b), cv = Api.pageVersion(api.pageBytes());
                 final String nm = name;
                 String msg = nv > 0 && cv > 0 ? (nv > cv ? "Nouvelle version de la page : v" + nv + " (actuelle : v" + cv + ").\n\nFaire la mise à jour ? La page sera copiée dans " + api.appDir().getAbsolutePath() + "."
@@ -562,10 +582,14 @@ public class MainActivity extends Activity {
         try { startActivityForResult(i, REQ_ZIP); } catch (Exception e) { Toast.makeText(this, "Aucun sélecteur de fichiers", Toast.LENGTH_LONG).show(); }
     }
 
+    void openWr() {
+        try { startActivity(new Intent(this, WrActivity.class).setAction(Intent.ACTION_MAIN)); } catch (Exception e) { Toast.makeText(this, "Schémas WinRelais : " + e.getMessage(), Toast.LENGTH_LONG).show(); }
+    }
+
     void reloadPage(String msg) {
         if (msg != null) Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
         pageReady = false;
-        web.loadUrl(ORIGIN + "/index.html?t=" + System.currentTimeMillis());
+        web.loadUrl(ORIGIN + startPath() + "?t=" + System.currentTimeMillis());
     }
 
     /* ---------- pont JavaScript ---------- */
@@ -597,6 +621,9 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public String appVersion() { return api.versionName(); }
+
+        @JavascriptInterface
+        public void openWr() { runOnUiThread(MainActivity.this::openWr); }
 
         @JavascriptInterface
         public void listen(final int id) {   // dictée : reconnaissance vocale d'Android (Google), résultat renvoyé à window.biSpeech

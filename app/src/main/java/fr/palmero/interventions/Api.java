@@ -38,7 +38,7 @@ import java.util.Locale;
 
 /** Le même service que le serveur QPython (/api/…), mais dans l'appli : fichiers dans Documents/Gestion interventions. */
 class Api {
-    static final String VERSION = "appli-3.5";
+    static final String VERSION = "appli-3.6";
     static final String[] SUBS = {"", "Gestion interventions", "Gestion interventions/config/global", "Gestion interventions/config/utilisateur",
             "Gestion interventions/données/OI", "Gestion interventions/données/rapports", "Gestion interventions/données/backup",
             "Gestion interventions/données/gestion", "Gestion interventions/appli"};
@@ -180,6 +180,7 @@ class Api {
         String p = u.getPath() == null ? "/" : u.getPath();
         try {
             if (p.equals("/") || p.equals("/index.html") || p.equals("/interventions.html")) return page();
+            if (p.equals("/winrelais.html")) return wrPage();
             if (p.equals("/favicon.ico")) return resp(404, "text/plain", new byte[0]);
             if (p.startsWith("/lib/") && !p.contains("..")) {   // bibliothèques intégrées à l'APK : lecteur PDF, OCR (moteur + langues), tableur
                 try {
@@ -316,7 +317,7 @@ class Api {
         File best = null;
         int bv = -2;
         for (File f : l) {
-            if (!f.isFile() || !isHtml(f.getName())) continue;
+            if (!f.isFile() || !isHtml(f.getName()) || isWrName(f.getName())) continue;
             int v;
             try { byte[] b = readAll(new FileInputStream(f)); if (!signed(b)) continue; v = pageVersion(b); } catch (Exception e) { continue; }
             if (best == null || v > bv || (v == bv && f.lastModified() > best.lastModified())) { best = f; bv = v; }
@@ -400,9 +401,80 @@ class Api {
         return resp(200, "text/html", t.getBytes(StandardCharsets.UTF_8));
     }
 
+    /* ---------- page Schémas WinRelais : même dossier appli, fichier winrelais-vN.html (signé), repère « winrelais-version: N » ---------- */
+    static final java.util.regex.Pattern WV = java.util.regex.Pattern.compile("winrelais-version: (\\d+)");
+    static boolean isWrName(String n) { return n.toLowerCase().startsWith("winrelais"); }
+    static int wrVersion(byte[] b) {
+        if (b == null) return -1;
+        java.util.regex.Matcher m = WV.matcher(new String(b, 0, Math.min(b.length, 8192), StandardCharsets.UTF_8));
+        return m.find() ? Integer.parseInt(m.group(1)) : -1;
+    }
+    static boolean isWrPage(byte[] b) { return wrVersion(b) > 0; }
+    String wrSource = "";
+
+    /** La page WinRelais la plus récente : dossier appli (signée) ou celle intégrée à l'APK, recopiée dans le dossier appli. */
+    byte[] wrBytes() {
+        byte[] best = null; int bv = -1; File bf = null;
+        File[] l = appDir().listFiles();
+        if (l != null) for (File f : l) {
+            if (!f.isFile() || !isHtml(f.getName()) || !isWrName(f.getName())) continue;
+            try { byte[] b = readAll(new FileInputStream(f)); int v = wrVersion(b); if (v > bv && signed(b)) { best = b; bv = v; bf = f; } } catch (Exception ignored) { }
+        }
+        byte[] emb = null;
+        try { emb = readAll(ctx.getAssets().open("page/winrelais.html")); } catch (Exception ignored) { }
+        int ev = wrVersion(emb);
+        if (emb != null && ev > bv) {
+            try { importWr(emb); } catch (Exception ignored) { }
+            wrSource = "intégrée à l'appli (v" + ev + ")"; return emb;
+        }
+        if (best != null) { wrSource = bf.getAbsolutePath() + " (v" + bv + ")"; return best; }
+        wrSource = "absente"; return null;
+    }
+    int wrLocalVersion() { return wrVersion(wrBytes()); }
+
+    /** Installe une page WinRelais signée dans le dossier appli (winrelais-vN.html) ; les versions plus anciennes sont supprimées. */
+    String importWr(byte[] b) throws Exception {
+        if (!signed(b)) throw new Exception("page WinRelais non signée par l'auteur : refusée");
+        int v = wrVersion(b); if (v <= 0) throw new Exception("pas une page WinRelais");
+        File d = appDir();
+        if (!d.isDirectory() && !d.mkdirs()) throw new Exception("impossible de créer " + d.getAbsolutePath());
+        File f = new File(d, "winrelais-v" + v + ".html");
+        File tmp = new File(d, ".winrelais.part");
+        try (OutputStream o = new FileOutputStream(tmp)) { o.write(b); }
+        if (f.exists()) f.delete();
+        if (!tmp.renameTo(f)) { tmp.delete(); throw new Exception("écriture impossible"); }
+        File[] l = d.listFiles();
+        if (l != null) for (File x : l) if (!x.equals(f) && x.isFile() && isWrName(x.getName()) && isHtml(x.getName())) {
+            try { if (wrVersion(readAll(new FileInputStream(x))) < v) x.delete(); } catch (Exception ignored) { }
+        }
+        return f.getName();
+    }
+
+    static final String WR_SHIM = "<script>(function(){var W=window.WrApi;if(!W)return;"
+            + "function b64(buf){var u=new Uint8Array(buf),s='',i;for(i=0;i<u.length;i+=32768)s+=String.fromCharCode.apply(null,u.subarray(i,i+32768));return btoa(s);}"
+            + "window.print=function(){W.print(document.title||'Schéma');};"
+            + "document.addEventListener('click',function(e){var a=e.target&&e.target.closest?e.target.closest('a[download]'):null;if(!a)return;e.preventDefault();e.stopPropagation();"
+            + "var n=a.getAttribute('download')||'fichier';fetch(a.href).then(function(r){return r.arrayBuffer();}).then(function(b){W.save(n,b64(b));}).catch(function(x){alert('Enregistrement impossible : '+x);});},true);"
+            + "window.__wrOpen=function(u,n){fetch(u).then(function(r){if(!r.ok)throw new Error('fichier introuvable');return r.arrayBuffer();}).then(function(b){var i=document.getElementById('file');"
+            + "var dt=new DataTransfer();dt.items.add(new File([b],n,{type:'application/octet-stream'}));i.files=dt.files;i.dispatchEvent(new Event('change'));}).catch(function(x){alert('Ouverture impossible : '+x.message);});};"
+            + "window.__appBack=function(){var l=document.getElementById('lib');if(l&&getComputedStyle(l).display!=='none'){l.style.display='none';return true;}return false;};"
+            + "})();</script>";
+
+    WebResourceResponse wrPage() throws Exception {
+        byte[] b = wrBytes();
+        String t = b == null ? "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'><body style='font:16px sans-serif;padding:24px'>"
+                + "<h3>Schémas WinRelais</h3><p>Page absente du dossier " + appDir().getAbsolutePath() + ".</p><p>Installe-la avec « Ouvrir avec → Interventions » sur le fichier winrelais-vN.html, ou par la synchro avec l'autre appareil.</p>"
+                : new String(b, StandardCharsets.UTF_8);
+        int i = t.indexOf("<head>");
+        String sh = SHIM + WR_SHIM;
+        t = i >= 0 ? t.substring(0, i + 6) + sh + t.substring(i + 6) : sh + t;
+        return resp(200, "text/html", t.getBytes(StandardCharsets.UTF_8));
+    }
+
     /** Copie une page HTML (choisie ou reçue par « Ouvrir avec ») dans le dossier appli. */
     String importPage(InputStream in, String name) throws Exception {
         byte[] b = readAll(in);
+        if (isWrPage(b)) return importWr(b);
         if (!signed(b)) throw new Exception("page non signée par l'auteur (modifiée ou non officielle) : refusée");
         File d = appDir();
         if (!d.isDirectory() && !d.mkdirs()) throw new Exception("impossible de créer " + d.getAbsolutePath());

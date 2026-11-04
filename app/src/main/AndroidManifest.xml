@@ -83,6 +83,45 @@
             </intent-filter>
             <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity>
+        <activity
+            android:name=".WrActivity"
+            android:exported="true"
+            android:label="WinRelais"
+            android:icon="@mipmap/ic_wr"
+            android:roundIcon="@mipmap/ic_wr"
+            android:taskAffinity="fr.palmero.interventions.wr"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|uiMode|smallestScreenSize|density"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- fichiers .xrs (gestionnaire de fichiers, Drive…) : reconnus par l'extension -->
+            <intent-filter android:label="Ouvrir dans WinRelais">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.xrs" />
+                <data android:pathPattern=".*\\..*\\.xrs" />
+                <data android:pathPattern=".*\\..*\\..*\\.xrs" />
+                <data android:pathPattern=".*\\.XRS" />
+            </intent-filter>
+            <!-- pièces jointes (Gmail…) : type générique, le contenu est vérifié à l'ouverture -->
+            <intent-filter android:label="Ouvrir dans WinRelais">
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/x-xrs" />
+                <data android:mimeType="application/x-winrelais" />
+                <data android:mimeType="chemical/x-xrs" />
+            </intent-filter>
+        </activity>
         <receiver android:name=".Rem" android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

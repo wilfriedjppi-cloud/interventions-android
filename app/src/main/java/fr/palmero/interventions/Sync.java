@@ -180,7 +180,7 @@ class Sync {
             if (token.isEmpty() || !token.equals(h.get("x-pair"))) { reply(out, 403, "{\"error\":\"code de jumelage différent\"}"); return; }
             if (path.equals("/ping")) {
                 JSONObject o = new JSONObject(); o.put("ok", true); o.put("dev", dev); o.put("name", name); o.put("busy", busy.get());
-                o.put("pv", Api.pageVersion(api.pageBytes())); o.put("av", appCode());
+                o.put("pv", Api.pageVersion(api.pageBytes())); o.put("av", appCode()); o.put("wv", Math.max(0, api.wrLocalVersion()));
                 reply(out, 200, o.toString()); return;
             }
             if (path.equals("/live")) {                       // saisie en direct de l'autre appareil (petit message) : passe même pendant une synchro
@@ -194,6 +194,14 @@ class Sync {
             if (busy.get() && !path.equals("/ping")) { reply(out, 423, "{\"error\":\"occupé\"}"); return; }
             if (path.equals("/list")) { reply(out, 200, listJson().toString()); return; }
             if (path.equals("/page")) { sendBytes(out, api.pageBytes()); return; }
+            if (path.equals("/wr")) { byte[] wb = api.wrBytes(); if (wb == null) reply(out, 404, "{}"); else sendBytes(out, wb); return; }
+            if (path.equals("/wrin")) {                      // page WinRelais plus récente envoyée par l'autre appareil
+                if (len <= 0 || len > 60L * 1024 * 1024) { reply(out, 400, "{}"); return; }
+                ByteArrayOutputStream b = new ByteArrayOutputStream(); copy(in, b, len); byte[] wb = b.toByteArray();
+                boolean ok = Api.signed(wb) && Api.wrVersion(wb) > api.wrLocalVersion();
+                if (ok) try { api.importWr(wb); } catch (Exception e) { ok = false; }
+                reply(out, 200, "{\"ok\":" + ok + "}"); return;
+            }
             if (path.equals("/apk")) { File f = new File(ctx.getApplicationInfo().sourceDir); out.write(("HTTP/1.0 200 OK\r\nContent-Length: " + f.length() + "\r\n\r\n").getBytes(StandardCharsets.UTF_8)); try (InputStream fi = new FileInputStream(f)) { copy(fi, out, f.length()); } out.flush(); return; }
             if (path.equals("/pagein")) {                    // page plus récente envoyée par l'autre appareil
                 ByteArrayOutputStream b = new ByteArrayOutputStream(); copy(in, b, len); byte[] pb = b.toByteArray();
@@ -312,6 +320,18 @@ class Sync {
                 try (OutputStream o = new FileOutputStream(tmp)) { o.write(api.pageBytes()); }
                 Res w = http(hp, "POST", "/pagein", tmp); tmp.delete();
                 if (w.code == 200 && new String(w.body, StandardCharsets.UTF_8).contains("true")) pr.put("pageSent", lpv);
+            }
+            if (ping.has("wv")) {                           // page Schémas WinRelais : la plus récente passe aussi sur l'autre appareil
+                int rwv = ping.optInt("wv", 0), lwv = Math.max(0, api.wrLocalVersion());
+                if (rwv > lwv) {
+                    Res r = http(hp, "GET", "/wr", null);
+                    if (r.code == 200 && Api.signed(r.body) && Api.wrVersion(r.body) > lwv) { api.importWr(r.body); pr.put("wrNew", Api.wrVersion(r.body)); }
+                } else if (lwv > rwv) {
+                    File tmp = File.createTempFile("biwr", ".html", ctx.getCacheDir());
+                    try (OutputStream o = new FileOutputStream(tmp)) { o.write(api.wrBytes()); }
+                    Res w = http(hp, "POST", "/wrin", tmp); tmp.delete();
+                    if (w.code == 200 && new String(w.body, StandardCharsets.UTF_8).contains("true")) pr.put("wrSent", lwv);
+                }
             }
             long rav = ping.optLong("av", 0), lav = appCode();
             if (rav > lav && sp.getLong("apkGot", 0) == rav && new File(new File(ctx.getCacheDir(), "maj"), "Interventions-recue.apk").length() == sp.getLong("apkLen", -1)) {
