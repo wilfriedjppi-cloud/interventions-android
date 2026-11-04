@@ -45,6 +45,37 @@ ALIAS = {
 
 GRID = 200          # 2 mm : pas de la grille WinRelais
 
+# Caractères typographiques courants absents du Latin-1 -> équivalents simples
+SUBST = {
+    "\u2014": "-", "\u2013": "-", "\u2011": "-", "\u2012": "-", "\u2212": "-",
+    "\u2018": "'", "\u2019": "'", "\u201a": ",", "\u201c": '"', "\u201d": '"',
+    "\u201e": '"', "\u2026": "...", "\u0153": "oe", "\u0152": "OE", "\u20ac": "EUR",
+    "\u00a0": " ", "\u202f": " ", "\u2009": " ", "\u2002": " ", "\u2003": " ",
+    "\u03a9": "ohm", "\u2126": "ohm", "\u2264": "<=", "\u2265": ">=", "\u2192": "->",
+    "\u2190": "<-", "\u2022": "-", "\u00b7": ".", "\u2260": "<>", "\u03c6": "phi",
+    "\u2248": "~", "\u221e": "inf", "\u2713": "OK", "\u2714": "OK",
+}
+
+
+def _clean(obj, seen):
+    """Remplace récursivement les caractères non Latin-1 dans toutes les chaînes."""
+    if isinstance(obj, str):
+        out = []
+        for ch in obj:
+            if ch == wr.SEP or ord(ch) >= 256 or ch in "\r\n\x00":
+                rep = SUBST.get(ch, " " if ch in "\r\n\x00" else
+                                ("." if ch == wr.SEP else "?"))
+                seen[ch] = rep
+                out.append(rep)
+            else:
+                out.append(ch)
+        return "".join(out)
+    if isinstance(obj, list):
+        return [_clean(o, seen) for o in obj]
+    if isinstance(obj, dict):
+        return {k: _clean(v, seen) for k, v in obj.items()}
+    return obj
+
 
 class ConversionError(Exception):
     pass
@@ -76,6 +107,11 @@ def convert(data, biblio=None, snap=True):
     warns, errs = [], []
     if not isinstance(data, dict) or not data.get("folios"):
         raise ConversionError("JSON invalide : clé « folios » absente ou vide.")
+    seen = {}
+    data = _clean(data, seen)
+    for ch, rep in seen.items():
+        warns.append("caractère %r (U+%04X) remplacé par %r (non supporté par WinRelais)"
+                     % (ch, ord(ch), rep))
 
     b = wr.Builder(
         biblio or resource("bibliotheque.xrs"),
