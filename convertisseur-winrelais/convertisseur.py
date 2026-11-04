@@ -109,7 +109,7 @@ def types_disponibles(biblio=None):
     return lines
 
 
-def convert(data, biblio=None, snap=True, garder_cadre=False):
+def convert(data, biblio=None, snap=True, garder_cadre=False, fils=True):
     """data = dict JSON déjà chargé. Retourne (Doc, [avertissements])."""
     warns, errs = [], []
     if not isinstance(data, dict) or not data.get("folios"):
@@ -120,7 +120,7 @@ def convert(data, biblio=None, snap=True, garder_cadre=False):
         warns.append("caractère %r (U+%04X) remplacé par %r (non supporté par WinRelais)"
                      % (ch, ord(ch), rep))
     if _est_dessin(data):
-        return _convert_dessin(data, biblio, warns, garder_cadre)
+        return _convert_dessin(data, biblio, warns, garder_cadre, fils)
     inconnues = sorted(set(data) - CLES_RACINE)
     if inconnues:
         warns.append("clés ignorées à la racine : %s" % ", ".join(inconnues))
@@ -353,7 +353,7 @@ def _path_polylines(d, warns):
     return out
 
 
-def _convert_dessin(data, biblio, warns, garder_cadre=False):
+def _convert_dessin(data, biblio, warns, garder_cadre=False, fils=True):
     """Dessin vectoriel -> .xrs (traits, rectangles, polygones, textes en dessin libre)."""
     proj = data.get("projet", {}) or {}
     date = str(proj.get("date", ""))
@@ -398,6 +398,52 @@ def _convert_dessin(data, biblio, warns, garder_cadre=False):
             return [(e["x"], e["y"])]
         return []
 
+    # --- conducteurs : traits de cablage dessines comme des FilBus (couleur, section) ---
+    COULEURS = {   # trait JSON -> (nom, section mm2)  d'apres la legende du schema
+        "#111": ("Noir", None), "#000": ("Noir", None),
+        "#5aa0e0": ("Bleu clair neutre", "1,5"),
+        "#c62828": ("Rouge commande AC 230 V", "1,5"),
+        "#1a237e": ("Bleu fonce commande 24 V DC", "1"),
+        "#ef6c00": ("Orange circuit externe", "1,5"),
+        "#2e7d32": ("Vert/jaune PE", "16"),
+        "#888": ("Blanc/gris TC compensation", "0,5"),
+    }
+
+    def bgr(h):
+        h = h.lstrip("#")
+        if len(h) == 3:
+            h = "".join(c * 2 for c in h)
+        r, g, bl = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return bl * 65536 + g * 256 + r
+
+    def est_fil(e, titre):
+        """Trait orthogonal de cablage (pas un contour de symbole, pas un tireté)."""
+        if e.get("type") != "ligne" or not fils:
+            return None
+        if re.search(r"garde|fa[cç]ade|implantation|nomenclature", titre, re.I):
+            return None
+        st = e.get("style", {}) or {}
+        if st.get("stroke-dasharray"):
+            return None
+        try:
+            sw = float(st.get("stroke-width", 0.35))
+        except ValueError:
+            return None
+        if not (0.35 <= sw <= 0.5):
+            return None
+        if e["x1"] != e["x2"] and e["y1"] != e["y2"]:
+            return None
+        if abs(e["x2"] - e["x1"]) + abs(e["y2"] - e["y1"]) < 2.5:
+            return None
+        coul = (st.get("stroke") or "#000").lower()
+        nom, sec = COULEURS.get(coul, ("Couleur " + coul, None))
+        if coul in ("#000", "#111") and sec is None:
+            sec = "16" if "puissance" in titre.lower() else "1,5"
+            nom = "Noir puissance AC" if sec == "16" else "Noir"
+        if sec == "16" and coul == "#2e7d32":
+            sec = "16"
+        return ("%s - %s mm2" % (nom, sec), bgr(coul if coul in COULEURS else "#000000"), sw)
+
     def est_cadre(e):
         """Cadre exterieur/interieur, bandeau des colonnes, cartouche propres au JSON."""
         p = points(e)
@@ -414,7 +460,7 @@ def _convert_dessin(data, biblio, warns, garder_cadre=False):
             return True
         return min(ys) >= ph - 40
 
-    stats = {"cadre": 0, "trait": 0, "rect": 0, "cercle": 0, "texte": 0, "chemin": 0, "ignore": 0}
+    stats = {"fil": 0, "cadre": 0, "trait": 0, "rect": 0, "cercle": 0, "texte": 0, "chemin": 0, "ignore": 0}
     for fi, fol in enumerate(data["folios"]):
         b.add_folio(fol.get("titre", "Folio %d" % (fi + 1)))
 
@@ -435,8 +481,15 @@ def _convert_dessin(data, biblio, warns, garder_cadre=False):
             sw = width(st)[0]
             sans_trait = st.get("stroke") in (None, "none") or sw == 0
             if t == "ligne":
-                if sans_trait and "stroke" not in st:
-                    pass
+                f_ = est_fil(e, fol.get("titre", ""))
+                if f_:
+                    nom_, col_, sw_ = f_
+                    wd_ = max(10, int(round(sw_ * 100 * k / 5.0)) * 5)
+                    b.wires.append([str(X(e["x1"])), str(X(e["y1"])), str(X(e["x2"])),
+                                    str(X(e["y2"])), str(fi), "1", str(wd_), str(col_), "0",
+                                    nom_, "0", "0", "0", "0", "0", ""])
+                    stats["fil"] += 1
+                    continue
                 seg(e["x1"], e["y1"], e["x2"], e["y2"], st)
                 stats["trait"] += 1
             elif t == "rectangle":
@@ -473,7 +526,7 @@ def _convert_dessin(data, biblio, warns, garder_cadre=False):
                 stats["texte"] += 1
             else:
                 warns.append("folio %d : élément %r ignoré" % (fi + 1, t))
-    warns.append("converti : %(trait)d traits, %(rect)d rectangles, %(cercle)d cercles, "
+    warns.append("converti : %(fil)d conducteurs, %(trait)d traits, %(rect)d rectangles, %(cercle)d cercles, "
                  "%(chemin)d chemins, %(texte)d textes ; %(ignore)d aplats sans contour et "
                  "%(cadre)d éléments de cadre/cartouche du JSON ignorés"
                  % stats)
@@ -484,13 +537,13 @@ def _convert_dessin(data, biblio, warns, garder_cadre=False):
     return b.build(), warns
 
 
-def convert_file(json_path, out_path=None, biblio=None, snap=True, garder_cadre=False):
+def convert_file(json_path, out_path=None, biblio=None, snap=True, garder_cadre=False, fils=True):
     with open(json_path, "r", encoding="utf-8-sig") as f:
         try:
             data = json.load(f)
         except json.JSONDecodeError as e:
             raise ConversionError("JSON illisible : %s" % e)
-    doc, warns = convert(data, biblio, snap, garder_cadre)
+    doc, warns = convert(data, biblio, snap, garder_cadre, fils)
     out_path = out_path or os.path.splitext(json_path)[0] + ".xrs"
     try:
         doc.save(out_path)
@@ -601,6 +654,8 @@ def cli(argv):
     ap.add_argument("--sans-grille", action="store_true")
     ap.add_argument("--garder-cadre", action="store_true",
                     help="dessin vectoriel : conserve cadre et cartouche du JSON")
+    ap.add_argument("--lignes", action="store_true",
+                    help="dessin vectoriel : tout en traits libres (pas de conducteurs)")
     a = ap.parse_args(argv)
     if a.types:
         print("\n".join(types_disponibles(a.bibliotheque)))
@@ -610,7 +665,7 @@ def cli(argv):
         return 2
     try:
         out, resume, warns = convert_file(a.json, a.sortie, a.bibliotheque, not a.sans_grille,
-                                        a.garder_cadre)
+                                        a.garder_cadre, not a.lignes)
     except ConversionError as e:
         print("ERREUR :\n" + str(e), file=sys.stderr)
         return 1
