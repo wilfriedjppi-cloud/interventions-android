@@ -387,18 +387,25 @@ class Sync {
         }
     }
 
+    void remember(String hp) {
+        try { JSONArray k = new JSONArray(sp.getString("known", "[]")), n = new JSONArray(); n.put(hp); for (int i = 0; i < k.length() && n.length() < 6; i++) if (!k.optString(i).equals(hp)) n.put(k.optString(i)); sp.edit().putString("known", n.toString()).apply(); } catch (Exception ignored) { }
+    }
+    String tried = "";
+
     /** L'autre appareil joignable (déjà vu par la synchro, sinon recherché) : hôte:port ou null. */
     String peer() {
+        for (int w = 0; w < 8; w++) { boolean any; synchronized (found) { any = !found.isEmpty(); } if (any || !liveHosts.isEmpty()) break; try { Thread.sleep(500); } catch (Exception ignored) { } }   // découverte Wi-Fi en cours (WillRelais ouvert seul)
         java.util.List<String> l = new java.util.ArrayList<>(liveHosts);
         for (String c : candidates(null)) if (!l.contains(c)) l.add(c);
+        tried = String.join(", ", l);
         for (String hp : l) {
-            try { Res r = http(hp, "GET", "/ping", null); if (r.code != 200) continue; JSONObject o = new JSONObject(new String(r.body, StandardCharsets.UTF_8)); if (!o.optString("dev").equals(dev) && !o.optString("dev").isEmpty()) { liveHosts.add(hp); return hp; } } catch (Exception ignored) { }
+            try { Res r = http(hp, "GET", "/ping", null); if (r.code != 200) continue; JSONObject o = new JSONObject(new String(r.body, StandardCharsets.UTF_8)); if (!o.optString("dev").equals(dev) && !o.optString("dev").isEmpty()) { liveHosts.add(hp); remember(hp); return hp; } } catch (Exception ignored) { }
         }
         return null;
     }
 
     String remote(String path) throws Exception {
-        String hp = peer(); if (hp == null) throw new Exception("autre appareil injoignable (même Wi-Fi ou point d'accès, appli Interventions ouverte, synchro activée)");
+        String hp = peer(); if (hp == null) throw new Exception("autre appareil injoignable" + (tried.isEmpty() ? " : aucun appareil trouvé sur le Wi-Fi" : " (essayé : " + tried + ")") + ". Vérifie : même Wi-Fi ou point d'accès, appli Interventions ou WillRelais ouverte sur l'autre appareil, même code de jumelage, appli 3.7 ou plus sur les deux.");
         Res r = http(hp, "GET", path, null); if (r.code != 200) throw new Exception("refusé (" + r.code + ")");
         return new String(r.body, StandardCharsets.UTF_8);
     }
@@ -470,9 +477,9 @@ class Sync {
                     while ((l = readLine(in)) != null && !l.isEmpty()) if (l.toLowerCase().startsWith("content-length:")) n = Long.parseLong(l.substring(15).trim());
                     if (st != null && st.contains(" 200 ") && n > 0) { try (OutputStream fo = new FileOutputStream(f)) { copy(in, fo, n); } if (f.length() == n) { pr.put("apkNew", f.getAbsolutePath()); sp.edit().putLong("apkGot", rav).putLong("apkLen", n).apply(); } }
                 }
-            } else if (lav > rav && rav > 0 && sp.getLong("apkSent_" + ping.optString("dev") + "_" + rav, 0) != lav) {   // une seule fois par version
+            } else if (lav > rav && rav > 0 && System.currentTimeMillis() - sp.getLong("apkSentT_" + ping.optString("dev") + "_" + rav + "_" + lav, 0) > 15 * 60000L) {   // renvoyée au plus toutes les 15 min tant que l'autre appareil n'est pas à jour
                 Res w = http(hp, "POST", "/apkin", new File(ctx.getApplicationInfo().sourceDir));
-                if (w.code == 200) { pr.put("apkSent", lav); sp.edit().putLong("apkSent_" + ping.optString("dev") + "_" + rav, lav).apply(); }
+                if (w.code == 200) { pr.put("apkSent", lav); sp.edit().putLong("apkSentT_" + ping.optString("dev") + "_" + rav + "_" + lav, System.currentTimeMillis()).apply(); }
             }
         } catch (Exception e) { try { pr.put("updErr", String.valueOf(e.getMessage())); } catch (Exception ignored) { } }
     }
@@ -560,7 +567,9 @@ class Sync {
     Set<String> candidates(String manual) {
         Set<String> s = new java.util.LinkedHashSet<>();
         synchronized (found) { s.addAll(found.values()); }
+        if (manual == null || manual.trim().isEmpty()) manual = sp.getString("manual", "");
         if (manual != null && !manual.trim().isEmpty()) { String m = manual.trim(); s.add(m.contains(":") ? m : m + ":" + PORT0); }
+        try { JSONArray k = new JSONArray(sp.getString("known", "[]")); for (int i = 0; i < k.length(); i++) s.add(k.optString(i)); } catch (Exception ignored) { }
         String g = gateway(); if (!g.isEmpty()) for (int p = PORT0; p < PORT0 + 3; p++) s.add(g + ":" + p);
         return s;
     }
@@ -571,6 +580,7 @@ class Sync {
         JSONArray peers = new JSONArray();
         if (token.isEmpty()) return "{\"error\":\"code de jumelage absent\"}";
         if (!busy.compareAndSet(false, true)) return "{\"error\":\"synchro déjà en cours\"}";
+        if (manual != null && !manual.trim().isEmpty()) sp.edit().putString("manual", manual.trim()).apply();
         try {
             Set<String> seen = new HashSet<>();
             for (String hp : candidates(manual)) {
@@ -584,7 +594,7 @@ class Sync {
                     if (pd.isEmpty() || pd.equals(dev) || seen.contains(pd)) continue;
                     seen.add(pd);
                     pr.put("dev", pd); pr.put("name", o.optString("name"));
-                    liveHosts.add(hp);
+                    liveHosts.add(hp); remember(hp);
                     if (o.optBoolean("busy")) { pr.put("error", "l'autre appareil synchronise déjà"); peers.put(pr); continue; }
                     try { JSONArray a = o.optJSONArray("wd"); if (a != null) { java.util.List<String> l = new java.util.ArrayList<>(); for (int i = 0; i < a.length(); i++) l.add(a.optString(i)); api.wrAddDirs(l); } } catch (Exception ignored) { }   // mêmes dossiers WillRelais des deux côtés
                     syncWith(hp, pd, pr);

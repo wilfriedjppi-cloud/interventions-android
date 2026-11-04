@@ -556,9 +556,9 @@ public class MainActivity extends Activity {
         return false;
     }
 
-    boolean apkAsked = false; long apkLast = 0;   // « Plus tard » : redemandé au plus toutes les 30 min
+    boolean apkAsked = false; long apkLast = 0, apkLastLen = -1;   // « Plus tard » : redemandé au plus toutes les 30 min
     void askApk(File apk) {                                   // appli plus récente reçue de l'autre appareil : Android demande toujours la confirmation
-        if (apkAsked || apk == null || !apk.isFile() || System.currentTimeMillis() - apkLast < 30 * 60000L) return; apkAsked = true; apkLast = System.currentTimeMillis();
+        if (apkAsked || apk == null || !apk.isFile() || (apk.length() == apkLastLen && System.currentTimeMillis() - apkLast < 30 * 60000L)) return; apkAsked = true; apkLast = System.currentTimeMillis(); apkLastLen = apk.length();   // une nouvelle version est proposée tout de suite
         new AlertDialog.Builder(this).setTitle("Mise à jour de l'appli")
                 .setMessage("L'autre appareil a une version plus récente de l'appli Interventions. L'installer maintenant ?\n\nTes données restent en place.")
                 .setPositiveButton("Installer", (d, w) -> { apkAsked = false; installApk(apk); })
