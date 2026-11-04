@@ -1,5 +1,5 @@
-<!doctype html><!-- interventions-sig: MEYCIQDuzlOwiGyxptq4Wbznevz3jf/hDIwgp2KI0AdIN4GShAIhALm16DZrnKs/POLOAW0JSycmgNYma7jkBlymbfZSq+HS -->
-<!-- willrelais-version: 11 -->
+<!doctype html><!-- interventions-sig: MEUCIQDVkUZObyOTwogbpupTBDcOIXhEeNv03ILISOmpmhR5UQIgYgP5TNY2xVnMu0Tuu2eqzrTaSWIgD5QNslhTqxLD618= -->
+<!-- willrelais-version: 12 -->
 <html lang="fr">
 <head>
 <meta charset="utf-8">
@@ -891,7 +891,9 @@ initLib();
   $('bSave').textContent='💾 Enregistrer…'; $('bPdf').textContent='🖨 PDF / imprimer'; $('bNom').textContent='📋 Nomenclature (.csv)';
   const jl=$('fjson').closest('label'); jl.firstChild.textContent='⤵ Import JSON';
   const phl=document.createElement('label'); phl.className='btn'; phl.innerHTML='📷 Importer une photo<input id="fphoto" type="file" accept="image/*" hidden>';
-  [openLbl,$('bSave'),$('bPdf'),phl,jl,$('bNom')].forEach(e=>fm.appendChild(e));
+  const shx=document.createElement('button'); shx.id='bShareX'; shx.textContent='📤 Partager le schéma (.xrs)';
+  const shp=document.createElement('button'); shp.id='bShareP'; shp.textContent='📤 Partager en PDF';
+  [openLbl,$('bSave'),shx,$('bPdf'),shp,phl,jl,$('bNom')].forEach(e=>fm.appendChild(e));
   const info=document.createElement('small'); info.id='finfo'; fm.appendChild(info);
   const closeF=()=>fm.classList.remove('on');
   fb.onclick=(e)=>{ e.stopPropagation(); info.textContent=W&&W.state?('Bibliothèque de symboles et photos : dossier '+(JSON.parse(W.state()).def||'WillRelais')+' (partagé avec l\'autre appareil).'):''; fm.classList.toggle('on'); };
@@ -903,6 +905,43 @@ initLib();
   const fu=document.createElement('div'); fu.id='fundo'; fu.innerHTML='<button id="fUndo" disabled title="Annuler">↶</button><button id="fRedo" disabled title="Rétablir">↷</button>'; $('stage').appendChild(fu);
   $('fUndo').onclick=()=>undo(); $('fRedo').onclick=()=>redo();
   $('status').style.bottom='8px';
+
+  /* ---------- partager : le schéma (.xrs) ou un PDF de tous les folios (mail, WhatsApp, Drive…) ---------- */
+  async function shareFile(bytes,name,type){
+    const f=new File([bytes],name,{type});
+    try{ if(navigator.share&&(!navigator.canShare||navigator.canShare({files:[f]}))){ await navigator.share({files:[f],title:name}); return; } }catch(e){ if(e&&e.name==='AbortError') return; }
+    const a=document.createElement('a'); a.href=URL.createObjectURL(f); a.download=name; document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},3000);
+  }
+  const baseName=()=>fname.replace(/\.xrs$/i,'');
+  shx.onclick=()=>{ if(!M) return alert('Ouvre d\'abord un schéma.'); shareFile(encode(serializeXrs(M.doc)),baseName()+'.xrs','application/octet-stream'); };
+  /* PDF : chaque folio dessiné en image haute définition (300 dpi en A4), une page par folio */
+  async function folioJpeg(i){
+    const r=folioSVG(M,i,{edit:false}); const k=Math.min(3508/Math.max(r.W,r.H)*29700/29700, 4961/Math.max(r.W,r.H)); const px=Math.round(r.W/100/25.4*300), py=Math.round(r.H/100/25.4*300);
+    const sc=Math.min(1, 4961/Math.max(px,py)); const w=Math.round(px*sc), h=Math.round(py*sc);
+    const svgT=`<svg xmlns="${NS}" viewBox="0 0 ${r.W} ${r.H}" width="${w}" height="${h}">${r.body}</svg>`;
+    const u=URL.createObjectURL(new Blob([svgT],{type:'image/svg+xml'}));
+    try{ const im=await new Promise((res,rej)=>{const x=new Image();x.onload=()=>res(x);x.onerror=()=>rej(new Error('dessin du folio '+(i+1)));x.src=u;});
+      const c=document.createElement('canvas'); c.width=w; c.height=h; const x=c.getContext('2d'); x.fillStyle='#fff'; x.fillRect(0,0,w,h); x.drawImage(im,0,0,w,h);
+      const b=await new Promise(res=>c.toBlob(res,'image/jpeg',0.88)); return {bytes:new Uint8Array(await b.arrayBuffer()),w,h,W:r.W,H:r.H}; }
+    finally{ URL.revokeObjectURL(u); }
+  }
+  function pdfOf(pages,title){
+    const enc=new TextEncoder(), parts=[], offs=[]; let len=0; const put=(x)=>{const b=typeof x==='string'?enc.encode(x):x; parts.push(b); len+=b.length;};
+    const obj=(n,body)=>{ offs[n]=len; put(n+' 0 obj\n'); body(); put('\nendobj\n'); };
+    put('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n'); const N=pages.length, kids=pages.map((_,i)=>(3+i*3)+' 0 R').join(' ');
+    obj(1,()=>put('<< /Type /Catalog /Pages 2 0 R >>')); obj(2,()=>put(`<< /Type /Pages /Kids [${kids}] /Count ${N} >>`));
+    pages.forEach((p,i)=>{ const n=3+i*3, pw=(p.W/100*72/25.4).toFixed(2), ph=(p.H/100*72/25.4).toFixed(2); const cs=`q ${pw} 0 0 ${ph} 0 0 cm /Im0 Do Q`;
+      obj(n,()=>put(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pw} ${ph}] /Resources << /XObject << /Im0 ${n+2} 0 R >> >> /Contents ${n+1} 0 R >>`));
+      obj(n+1,()=>{put(`<< /Length ${cs.length} >>\nstream\n`);put(cs);put('\nendstream');});
+      obj(n+2,()=>{put(`<< /Type /XObject /Subtype /Image /Width ${p.w} /Height ${p.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${p.bytes.length} >>\nstream\n`);put(p.bytes);put('\nendstream');}); });
+    const info=3+N*3; obj(info,()=>put(`<< /Title (${String(title).replace(/[()\\]/g,'').replace(/[^\x20-\x7e]/g,'_')}) /Producer (WillRelais) >>`));
+    const xref=len; let t=`xref\n0 ${info+1}\n0000000000 65535 f \n`; for(let i=1;i<=info;i++) t+=String(offs[i]).padStart(10,'0')+' 00000 n \n';
+    put(t+`trailer\n<< /Size ${info+1} /Root 1 0 R /Info ${info} 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+    const out=new Uint8Array(len); let o=0; for(const b of parts){out.set(b,o);o+=b.length;} return out;
+  }
+  window.__wlPdf=async()=>{ const pages=[]; for(let i=0;i<M.folios.length;i++){ $('status').textContent=`PDF : folio ${i+1}/${M.folios.length}…`; pages.push(await folioJpeg(i)); } updateTools(); return pdfOf(pages,baseName()); };
+  shp.onclick=async()=>{ if(!M) return alert('Ouvre d\'abord un schéma.'); shp.disabled=true;
+    try{ const b=await window.__wlPdf(); await shareFile(b,baseName()+'.pdf','application/pdf'); }catch(e){ alert('PDF impossible : '+(e.message||e)); } finally{ shp.disabled=false; updateTools(); } };
 
   /* ---------- grille de points ---------- */
   let gridOn=false; try{gridOn=localStorage.getItem('wl.grid')==='1';}catch(e){}

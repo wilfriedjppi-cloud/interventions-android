@@ -136,7 +136,7 @@
   function footer() {
     var F = $$('wf-f'), h = '';
     if (S.side === 'there') h = '<span style="color:#9ca3af">« ⬇ Copier ici » recopie dans /' + esc(S.here || S.state.cur || '') + ' (dossier de cet appareil)</span>';
-    else if (S.mode === 'save') h = '<input id="wf-n" value="' + esc(S.save.name) + '"><button type="button" id="wf-mk">📁＋</button><button type="button" class="pri" id="wf-sv">💾 Enregistrer ici</button><button type="button" id="wf-sh">Envoyer…</button>';
+    else if (S.mode === 'save') h = '<input id="wf-n" value="' + esc(S.save.name) + '"><button type="button" id="wf-mk">📁＋</button><button type="button" class="pri" id="wf-sv">💾 Enregistrer ici</button><button type="button" id="wf-sh">📤 Partager</button>';
     else h = '<button type="button" id="wf-mk">📁＋ Nouveau dossier</button><button type="button" class="pri" id="wf-cur">✔ Dossier d\'enregistrement</button>';
     F.innerHTML = h;
     if ($$('wf-mk')) $$('wf-mk').onclick = function () { var nm = prompt('Nom du nouveau dossier :'); if (!nm) return; var r = W.mkdir(S.here, nm); if (!r) return msg('Création impossible.'); S.here = r; load(); };
@@ -149,7 +149,11 @@
       if (/\.xrs$/i.test(nm) && window.__wlSidecar && W.saveText) { var sc = window.__wlSidecar(); if (sc) W.saveText(S.here, nm.replace(/\.xrs$/i, '') + '.photos.json', sc); }   // photos du schéma, à côté du .xrs
       window.__wlOpenDir = S.here; close();
     };
-    if ($$('wf-sh')) $$('wf-sh').onclick = function () { W.share($$('wf-n').value.trim() || S.save.name, S.save.data); };
+    if ($$('wf-sh')) $$('wf-sh').onclick = function () {   // partage (mail, WhatsApp, Drive…) du fichier tel quel, sans l'enregistrer
+      var nm = $$('wf-n').value.trim() || S.save.name, bin = atob(S.save.data), u = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+      var f = new File([u], nm, { type: /\.csv$/i.test(nm) ? 'text/csv' : 'application/octet-stream' });
+      if (navigator.share) navigator.share({ files: [f], title: nm }).catch(function () { }); else W.share(nm, S.save.data);
+    };
   }
 
   function addBtn() {
