@@ -376,14 +376,21 @@ class Builder:
         self.numbers.append([str(x), str(y), text, str(folio), str(orient), "Arial", "300",
                              "0", "65535", "0", "0", "0", ""])
 
-    def text(self, folio, x, y, text, size=400, bold=False, angle=0):
-        self.texts.append([str(x), str(y), text, "", str(folio), "0", "Arial",
+    def text(self, folio, x, y, text, size=400, bold=False, angle=0, align=0):
+        """align : 0 = a gauche, 6 = centre, 2 = a droite ; y = haut du texte."""
+        self.texts.append([str(x), str(y), text, "", str(folio), str(align), "Arial",
                            str(size), str(angle), "0", "1" if bold else "0", "-1",
                            "0", "0", "", "", "0", ""])
 
-    def box(self, folio, x1, y1, x2, y2):
+    def box(self, folio, x1, y1, x2, y2, width=20, dash=2):
+        """Rectangle de dessin libre (dash : 0 plein, 2 pointille)."""
         self.boxes.append([str(x1), str(y1), str(x2), str(y2), "0", str(folio), "0",
-                           "20", "2", "2", "1", "16777215", "0", "0", ""])
+                           str(width), str(dash), "2", "1", "16777215", "0", "0", ""])
+
+    def line(self, folio, x1, y1, x2, y2, width=20, dash=0):
+        """Trait de dessin libre (non electrique)."""
+        self.boxes.append([str(x1), str(y1), str(x2), str(y2), "2", str(folio), "0",
+                           str(width), str(dash), "2", "1", "16777215", "0", "0", ""])
 
     # ---- assemblage ------------------------------------------------------
     def build(self):
@@ -519,10 +526,18 @@ def preview(doc, outdir):
                 ax.text(int(r[0]), int(r[1]), r[2], fontsize=4, color="green")
         for r in tails["Texte"]:
             if int(r[4]) == fi:
-                ax.text(int(r[0]), int(r[1]), r[2], fontsize=5, va="top")
+                ha = {"0": "left", "6": "center", "2": "right"}.get(r[5], "left")
+                ax.text(int(r[0]), int(r[1]), r[2], fontsize=int(r[7]) / 100.0 * 1.15, va="top",
+                        ha=ha, fontweight="bold" if r[10] == "1" else "normal")
         for r in tails["DSansTexte"]:
             if int(r[5]) == fi:
-                ax.plot([int(r[0]), int(r[2])], [int(r[1]), int(r[3])], "k--", lw=0.5)
+                x1, y1, x2, y2 = (int(r[k]) for k in range(4))
+                ls = "--" if r[8] == "2" else "-"
+                lw = max(0.3, int(r[7]) / 30.0)
+                if r[4] == "0":
+                    ax.plot([x1, x2, x2, x1, x1], [y1, y1, y2, y2, y1], "k" + ls, lw=lw)
+                else:
+                    ax.plot([x1, x2], [y1, y2], "k" + ls, lw=lw)
         p = os.path.join(outdir, "folio%d.png" % fi)
         fig.savefig(p, dpi=90, bbox_inches="tight")
         plt.close(fig)

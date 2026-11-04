@@ -13,12 +13,14 @@ Voir LISEZMOI.txt pour le format.
 """
 import datetime
 import json
+import math
 import os
+import re
 import sys
 
 import winrelais as wr
 
-VERSION = "1.0"
+VERSION = "1.1"
 
 # Noms courts -> (famille, préfixe) de la bibliothèque
 ALIAS = {
@@ -107,19 +109,21 @@ def types_disponibles(biblio=None):
     return lines
 
 
-def convert(data, biblio=None, snap=True):
+def convert(data, biblio=None, snap=True, garder_cadre=False):
     """data = dict JSON déjà chargé. Retourne (Doc, [avertissements])."""
     warns, errs = [], []
     if not isinstance(data, dict) or not data.get("folios"):
         raise ConversionError("JSON invalide : clé « folios » absente ou vide.")
     seen = {}
     data = _clean(data, seen)
-    inconnues = sorted(set(data) - CLES_RACINE)
-    if inconnues:
-        warns.append("clés ignorées à la racine : %s" % ", ".join(inconnues))
     for ch, rep in seen.items():
         warns.append("caractère %r (U+%04X) remplacé par %r (non supporté par WinRelais)"
                      % (ch, ord(ch), rep))
+    if _est_dessin(data):
+        return _convert_dessin(data, biblio, warns, garder_cadre)
+    inconnues = sorted(set(data) - CLES_RACINE)
+    if inconnues:
+        warns.append("clés ignorées à la racine : %s" % ", ".join(inconnues))
 
     b = wr.Builder(
         biblio or resource("bibliotheque.xrs"),
@@ -242,13 +246,251 @@ def convert(data, biblio=None, snap=True):
     return b.build(), warns
 
 
-def convert_file(json_path, out_path=None, biblio=None, snap=True):
+# --------------------------------------------------------------------------
+# Import d'un DESSIN vectoriel ("schema-electrique/1.x") : lignes, rectangles,
+# cercles, chemins, textes par folio  ->  dessin libre WinRelais
+# --------------------------------------------------------------------------
+def _est_dessin(data):
+    return isinstance(data, dict) and (
+        str(data.get("format", "")).startswith("schema-electrique")
+        or any(isinstance(f, dict) and "elements" in f for f in data.get("folios", [])))
+
+
+def _arc_points(x1, y1, rx, ry, phi, fa, fs, x2, y2, n=14):
+    """Arc SVG (parametrage par extremites) -> liste de points."""
+    if rx == 0 or ry == 0:
+        return [(x1, y1), (x2, y2)]
+    ph = math.radians(phi)
+    cp, sp = math.cos(ph), math.sin(ph)
+    dx, dy = (x1 - x2) / 2.0, (y1 - y2) / 2.0
+    x1p, y1p = cp * dx + sp * dy, -sp * dx + cp * dy
+    rx, ry = abs(rx), abs(ry)
+    lam = x1p ** 2 / rx ** 2 + y1p ** 2 / ry ** 2
+    if lam > 1:
+        rx, ry = rx * math.sqrt(lam), ry * math.sqrt(lam)
+    num = rx ** 2 * ry ** 2 - rx ** 2 * y1p ** 2 - ry ** 2 * x1p ** 2
+    den = rx ** 2 * y1p ** 2 + ry ** 2 * x1p ** 2
+    co = math.sqrt(max(0.0, num / den)) if den else 0.0
+    if fa == fs:
+        co = -co
+    cxp, cyp = co * rx * y1p / ry, -co * ry * x1p / rx
+    cx = cp * cxp - sp * cyp + (x1 + x2) / 2.0
+    cy = sp * cxp + cp * cyp + (y1 + y2) / 2.0
+
+    def ang(ux, uy, vx, vy):
+        a = math.atan2(ux * vy - uy * vx, ux * vx + uy * vy)
+        return a
+    t1 = ang(1, 0, (x1p - cxp) / rx, (y1p - cyp) / ry)
+    dt = ang((x1p - cxp) / rx, (y1p - cyp) / ry, (-x1p - cxp) / rx, (-y1p - cyp) / ry)
+    if not fs and dt > 0:
+        dt -= 2 * math.pi
+    elif fs and dt < 0:
+        dt += 2 * math.pi
+    pts = []
+    for k in range(n + 1):
+        t = t1 + dt * k / n
+        pts.append((cx + rx * math.cos(t) * cp - ry * math.sin(t) * sp,
+                    cy + rx * math.cos(t) * sp + ry * math.sin(t) * cp))
+    return pts
+
+
+def _path_polylines(d, warns):
+    """Chemin SVG (M L H V A Z, absolu/relatif) -> liste de polylignes."""
+    toks = re.findall(r"[MmLlHhVvAaZzCcSsQqTt]|-?\d*\.?\d+(?:[eE][-+]?\d+)?", d)
+    out, cur, i = [], [], 0
+    x = y = sx = sy = 0.0
+    cmd = None
+
+    def num(k):
+        return float(toks[k])
+    while i < len(toks):
+        if re.match(r"[A-Za-z]", toks[i]):
+            cmd = toks[i]
+            i += 1
+            if cmd in "Zz":
+                if cur:
+                    cur.append((sx, sy))
+                    out.append(cur)
+                    cur = []
+                x, y = sx, sy
+                continue
+        if cmd in ("M", "m"):
+            if cur:
+                out.append(cur)
+            nx, ny = num(i), num(i + 1)
+            i += 2
+            x, y = (nx, ny) if cmd == "M" else (x + nx, y + ny)
+            sx, sy = x, y
+            cur = [(x, y)]
+            cmd = "L" if cmd == "M" else "l"
+        elif cmd in ("L", "l"):
+            nx, ny = num(i), num(i + 1)
+            i += 2
+            x, y = (nx, ny) if cmd == "L" else (x + nx, y + ny)
+            cur.append((x, y))
+        elif cmd in ("H", "h"):
+            v = num(i)
+            i += 1
+            x = v if cmd == "H" else x + v
+            cur.append((x, y))
+        elif cmd in ("V", "v"):
+            v = num(i)
+            i += 1
+            y = v if cmd == "V" else y + v
+            cur.append((x, y))
+        elif cmd in ("A", "a"):
+            rx, ry, ph, fa, fs, ex, ey = (num(i + k) for k in range(7))
+            i += 7
+            if cmd == "a":
+                ex, ey = x + ex, y + ey
+            cur += _arc_points(x, y, rx, ry, ph, int(fa), int(fs), ex, ey)[1:]
+            x, y = ex, ey
+        else:
+            warns.append("chemin SVG : commande %r non gérée, chemin ignoré" % cmd)
+            return out
+    if cur:
+        out.append(cur)
+    return out
+
+
+def _convert_dessin(data, biblio, warns, garder_cadre=False):
+    """Dessin vectoriel -> .xrs (traits, rectangles, polygones, textes en dessin libre)."""
+    proj = data.get("projet", {}) or {}
+    date = str(proj.get("date", ""))
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", date)
+    if m:
+        date = "%s/%s/%s" % (m.group(3), m.group(2), m.group(1))
+    client = str(proj.get("client", "")).split(" - ")[0].split(",")[0].strip()
+    titre = " - ".join(x for x in (proj.get("objet"),
+                                   ("dossier " + str(proj["dossier"])) if proj.get("dossier") else None,
+                                   client or None) if x)
+    b = wr.Builder(biblio or resource("bibliotheque.xrs"),
+                   company=data.get("societe") or proj.get("societe") or "",
+                   address=data.get("adresse") or proj.get("adresse") or "",
+                   drawer=data.get("dessinateur") or proj.get("auteur") or "",
+                   date=date or datetime.date.today().strftime("%d/%m/%Y"),
+                   drawing_title=data.get("titre_dessin") or titre)
+    W, H = b.folio_tpl.size
+    page = (data.get("unites", {}) or {}).get("page", {}) or {}
+    pl, ph = float(page.get("l", 420)), float(page.get("h", 297))
+    k = min(W / (pl * 100.0), H / (ph * 100.0))
+    if abs(k - 1.0) > 0.01:
+        warns.append("page du JSON %g x %g mm -> folio WinRelais %g x %g mm : "
+                     "dessin réduit à %d %%" % (pl, ph, W / 100.0, H / 100.0, round(k * 100)))
+
+    def X(v):
+        return int(round(float(v) * 100 * k))
+
+    def width(style):
+        try:
+            sw = float(style.get("stroke-width", 0.35))
+        except ValueError:
+            sw = 0.35
+        return sw, max(10, int(round(sw * 100 * k / 5.0)) * 5)
+
+    def points(e):
+        t = e.get("type")
+        if t == "ligne":
+            return [(e["x1"], e["y1"]), (e["x2"], e["y2"])]
+        if t == "rectangle":
+            return [(e["x"], e["y"]), (e["x"] + e["l"], e["y"] + e["h"])]
+        if t == "texte":
+            return [(e["x"], e["y"])]
+        return []
+
+    def est_cadre(e):
+        """Cadre exterieur/interieur, bandeau des colonnes, cartouche propres au JSON."""
+        p = points(e)
+        if not p:
+            return False
+        ys = [y for _, y in p]
+        if e.get("type") == "rectangle":
+            (x0, y0), (x1, y1) = p
+            if x0 <= 10 and x1 >= pl - 10:
+                return True
+            if x0 <= 14 and x1 >= pl - 14 and y0 <= 14:
+                return True
+        if 7 <= min(ys) and max(ys) <= 18.5:
+            return True
+        return min(ys) >= ph - 40
+
+    stats = {"cadre": 0, "trait": 0, "rect": 0, "cercle": 0, "texte": 0, "chemin": 0, "ignore": 0}
+    for fi, fol in enumerate(data["folios"]):
+        b.add_folio(fol.get("titre", "Folio %d" % (fi + 1)))
+
+        def seg(x1, y1, x2, y2, st):
+            sw, w = width(st)
+            dash = 2 if st.get("stroke-dasharray") else 0
+            b.line(fi, X(x1), X(y1), X(x2), X(y2), w, dash)
+
+        def poly(pts, st):
+            for (xa, ya), (xb, yb) in zip(pts, pts[1:]):
+                seg(xa, ya, xb, yb, st)
+
+        for e in fol.get("elements", []):
+            if not garder_cadre and est_cadre(e):
+                stats["cadre"] += 1
+                continue
+            t, st = e.get("type"), e.get("style", {}) or {}
+            sw = width(st)[0]
+            sans_trait = st.get("stroke") in (None, "none") or sw == 0
+            if t == "ligne":
+                if sans_trait and "stroke" not in st:
+                    pass
+                seg(e["x1"], e["y1"], e["x2"], e["y2"], st)
+                stats["trait"] += 1
+            elif t == "rectangle":
+                if sans_trait:               # simple aplat de couleur : non supporté
+                    stats["ignore"] += 1
+                    continue
+                _, w = width(st)
+                b.box(fi, X(e["x"]), X(e["y"]), X(e["x"] + e["l"]), X(e["y"] + e["h"]),
+                      w, 2 if st.get("stroke-dasharray") else 0)
+                stats["rect"] += 1
+            elif t == "cercle":
+                if sans_trait:
+                    stats["ignore"] += 1
+                    continue
+                r = float(e["r"])
+                n = 12 if r < 1.5 else 20 if r < 5 else 32
+                pts = [(e["cx"] + r * math.cos(2 * math.pi * j / n),
+                        e["cy"] + r * math.sin(2 * math.pi * j / n)) for j in range(n + 1)]
+                poly(pts, st)
+                stats["cercle"] += 1
+            elif t == "polyligne":
+                poly([tuple(p) for p in e["points"]], st)
+                stats["trait"] += 1
+            elif t == "chemin_svg":
+                for pl_ in _path_polylines(e["d"], warns):
+                    poly(pl_, st)
+                stats["chemin"] += 1
+            elif t == "texte":
+                f = float(e.get("taille", 2.0))
+                size = max(100, int(round(f * 125 * k / 10.0)) * 10)
+                align = {"start": 0, "middle": 6, "end": 2}.get(e.get("ancrage", "start"), 0)
+                b.text(fi, X(e["x"]), int(round(float(e["y"]) * 100 * k - 0.72 * size)),
+                       str(e["texte"]), size, bool(e.get("gras", False)), 0, align)
+                stats["texte"] += 1
+            else:
+                warns.append("folio %d : élément %r ignoré" % (fi + 1, t))
+    warns.append("converti : %(trait)d traits, %(rect)d rectangles, %(cercle)d cercles, "
+                 "%(chemin)d chemins, %(texte)d textes ; %(ignore)d aplats sans contour et "
+                 "%(cadre)d éléments de cadre/cartouche du JSON ignorés"
+                 % stats)
+    if data.get("composants") or data.get("liaisons"):
+        warns.append("nomenclature (%d composants) et liste de liaisons (%d) du JSON non "
+                     "importées : seul le dessin l'est"
+                     % (len(data.get("composants", [])), len(data.get("liaisons", []))))
+    return b.build(), warns
+
+
+def convert_file(json_path, out_path=None, biblio=None, snap=True, garder_cadre=False):
     with open(json_path, "r", encoding="utf-8-sig") as f:
         try:
             data = json.load(f)
         except json.JSONDecodeError as e:
             raise ConversionError("JSON illisible : %s" % e)
-    doc, warns = convert(data, biblio, snap)
+    doc, warns = convert(data, biblio, snap, garder_cadre)
     out_path = out_path or os.path.splitext(json_path)[0] + ".xrs"
     try:
         doc.save(out_path)
@@ -266,10 +508,11 @@ def gui():
 
     root = tk.Tk()
     root.title("Convertisseur schéma → WinRelais (.xrs)  v" + VERSION)
-    root.geometry("760x520")
+    root.geometry("800x560")
     pad = dict(padx=8, pady=4)
     v_json, v_out, v_lib = tk.StringVar(), tk.StringVar(), tk.StringVar(value="(intégrée)")
     v_snap = tk.BooleanVar(value=True)
+    v_cadre = tk.BooleanVar(value=False)
 
     def row(r, label, var, cmd):
         ttk.Label(root, text=label).grid(row=r, column=0, sticky="w", **pad)
@@ -301,9 +544,11 @@ def gui():
     ttk.Checkbutton(root, text="Caler les positions sur la grille de 2 mm",
                     variable=v_snap).grid(row=3, column=1, sticky="w", **pad)
 
+    ttk.Checkbutton(root, text="Dessin vectoriel : conserver le cadre et le cartouche du JSON",
+                    variable=v_cadre).grid(row=4, column=1, sticky="w", **pad)
     log = scrolledtext.ScrolledText(root, height=18, font=("Consolas", 9))
-    log.grid(row=5, column=0, columnspan=3, sticky="nsew", **pad)
-    root.rowconfigure(5, weight=1)
+    log.grid(row=6, column=0, columnspan=3, sticky="nsew", **pad)
+    root.rowconfigure(6, weight=1)
     root.columnconfigure(1, weight=1)
 
     def say(t):
@@ -320,7 +565,7 @@ def gui():
             return
         try:
             out, resume, warns = convert_file(v_json.get(), v_out.get() or None,
-                                              lib(), v_snap.get())
+                                              lib(), v_snap.get(), v_cadre.get())
         except ConversionError as e:
             say("ERREUR :\n" + str(e))
             return
@@ -340,7 +585,7 @@ def gui():
             say("ERREUR : %r" % e)
 
     bar = ttk.Frame(root)
-    bar.grid(row=4, column=0, columnspan=3, sticky="e", **pad)
+    bar.grid(row=5, column=0, columnspan=3, sticky="e", **pad)
     ttk.Button(bar, text="Types de symboles", command=show_types).pack(side="left", padx=4)
     ttk.Button(bar, text="Convertir", command=do_convert).pack(side="left", padx=4)
     root.mainloop()
@@ -354,6 +599,8 @@ def cli(argv):
     ap.add_argument("-b", "--bibliotheque")
     ap.add_argument("--types", action="store_true", help="liste les symboles disponibles")
     ap.add_argument("--sans-grille", action="store_true")
+    ap.add_argument("--garder-cadre", action="store_true",
+                    help="dessin vectoriel : conserve cadre et cartouche du JSON")
     a = ap.parse_args(argv)
     if a.types:
         print("\n".join(types_disponibles(a.bibliotheque)))
@@ -362,7 +609,8 @@ def cli(argv):
         ap.print_help()
         return 2
     try:
-        out, resume, warns = convert_file(a.json, a.sortie, a.bibliotheque, not a.sans_grille)
+        out, resume, warns = convert_file(a.json, a.sortie, a.bibliotheque, not a.sans_grille,
+                                        a.garder_cadre)
     except ConversionError as e:
         print("ERREUR :\n" + str(e), file=sys.stderr)
         return 1

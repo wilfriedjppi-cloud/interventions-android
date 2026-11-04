@@ -52,3 +52,16 @@ LIMITES
   - Les contacts ne sont pas relies automatiquement aux bobines : seul le meme repere
     les associe, comme dans WinRelais.
   - Pas de placement automatique : les coordonnees sont a fournir dans le JSON.
+
+DESSIN VECTORIEL (format "schema-electrique/1.x", v1.1)
+  Un JSON dont les folios contiennent "elements" (ligne, rectangle, cercle, polyligne,
+  chemin_svg, texte) est importe comme DESSIN LIBRE WinRelais : traits, rectangles,
+  cercles (en polygones) et textes. Ce ne sont PAS des symboles WinRelais : pas de
+  broches ni de fils electriques. La nomenclature ("composants") et les "liaisons"
+  du JSON ne sont pas importees.
+  - Le cadre, le bandeau de colonnes et le cartouche propres au JSON sont ignores
+    (WinRelais a les siens) : case "conserver le cadre et le cartouche" pour les garder.
+  - Page A3 dans le JSON : si le folio WinRelais est en A4, le dessin est reduit (71 %).
+    Pour du A3 : choisir comme "Bibliotheque" un .xrs A3 vide cree dans WinRelais
+    (son folio sert de modele).
+  - Les aplats de couleur sans contour et les couleurs ne sont pas repris.
