@@ -1,5 +1,5 @@
-<!doctype html><!-- interventions-sig: MEQCIFVoleUuowU+o6iexFob9qgrqRlagR+yu3k15QqNnkXkAiA9VKcSLkhKCF7hZcTDsyvoPomiA2VQRj590RVtMYi78w== -->
-<!-- willrelais-version: 10 -->
+<!doctype html><!-- interventions-sig: MEYCIQDuzlOwiGyxptq4Wbznevz3jf/hDIwgp2KI0AdIN4GShAIhALm16DZrnKs/POLOAW0JSycmgNYma7jkBlymbfZSq+HS -->
+<!-- willrelais-version: 11 -->
 <html lang="fr">
 <head>
 <meta charset="utf-8">
@@ -43,10 +43,11 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:14px sy
 #libp{display:none;gap:12px;align-items:center;background:#1f2937;border-radius:10px;padding:10px;color:#e5e7eb}
 #libp button{background:var(--acc);color:#fff;text-align:center}
 @media print{
- body{background:#fff;overflow:visible;height:auto}
- #app{display:none}
- #print{display:block}
- #print svg{display:block;width:100%;height:auto;page-break-after:always;break-after:page}
+ html,body{background:#fff!important;overflow:visible!important;height:auto!important;min-height:0!important}
+ #app{display:block!important;height:auto!important;overflow:visible!important}
+ #app>*:not(#print),#fmenu,#fundo,#wrfs{display:none!important}
+ #print{display:block!important;background:#fff}
+ #print svg{display:block;width:100%;height:auto;max-height:98vh;page-break-after:always;break-after:page;page-break-inside:avoid}
  #print svg:last-child{page-break-after:auto;break-after:auto}
 }
 /* bibliothèque : mise en page téléphone (V2.5) */
