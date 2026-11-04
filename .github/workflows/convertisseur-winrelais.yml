@@ -1,6 +1,8 @@
 name: Convertisseur WinRelais (exe Windows)
 on:
   workflow_dispatch:
+permissions:
+  contents: write
 defaults:
   run:
     working-directory: convertisseur-winrelais
@@ -28,3 +30,10 @@ jobs:
         with:
           name: ConvertisseurWinRelais
           path: convertisseur-winrelais/dist/ConvertisseurWinRelais.exe
+      - name: Publier en Release (lien direct)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete convertisseur-winrelais --repo "${{ github.repository }}" --yes --cleanup-tag 2>/dev/null || true
+          gh release create convertisseur-winrelais dist/ConvertisseurWinRelais.exe exemple_depart_moteur.json --repo "${{ github.repository }}" --title "Convertisseur WinRelais (exe Windows)" --notes "Telecharger ConvertisseurWinRelais.exe sur le PC Windows. Exemple de schema : exemple_depart_moteur.json" --latest=false
