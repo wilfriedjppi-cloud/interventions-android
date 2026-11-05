@@ -6,8 +6,8 @@ android {
         applicationId 'fr.palmero.interventions'
         minSdk 26
         targetSdk 34
-        versionCode 221
-        versionName '3.11'
+        versionCode 222
+        versionName '3.12'
     }
     signingConfigs {
         release {

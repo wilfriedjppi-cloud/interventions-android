@@ -401,17 +401,18 @@ class Sync {
     /** Mises à jour seulement (page, page WillRelais, appli) avec les appareils joignables : récupère ou envoie la plus récente. */
     String pullUpdates() {
         JSONArray out = new JSONArray();
-        if (token.isEmpty() || !busy.compareAndSet(false, true)) return "[]";
+        if (token.isEmpty()) { tried = "code de jumelage absent"; return "[]"; }
+        if (!busy.compareAndSet(false, true)) { tried = "synchro déjà en cours, réessaie dans un instant"; return "[]"; }
         int ct = connTo; connTo = 1200;
         try {
-            Set<String> seen = new HashSet<>();
-            for (String hp : candidates(null)) {
+            Set<String> seen = new HashSet<>(), cs = candidates(null); tried = String.join(", ", cs);
+            for (String hp : cs) {
                 try {
                     Res r = http(hp, "GET", "/ping", null); if (r.code != 200) continue;
                     JSONObject o = new JSONObject(new String(r.body, StandardCharsets.UTF_8)); String pd = o.optString("dev");
                     if (pd.isEmpty() || pd.equals(dev) || seen.contains(pd)) continue;
                     seen.add(pd); remember(hp); liveHosts.add(hp);
-                    JSONObject pr = new JSONObject(); pr.put("host", hp); pr.put("dev", pd);
+                    JSONObject pr = new JSONObject(); pr.put("host", hp); pr.put("dev", pd); pr.put("name", o.optString("name")); pr.put("av", o.optLong("av", 0)); pr.put("pv", o.optInt("pv", 0)); pr.put("wv", o.optInt("wv", 0)); pr.put("lav", appCode());
                     connTo = 2500; updates(hp, o, pr); connTo = 1200; out.put(pr);
                 } catch (Exception ignored) { }
             }
@@ -419,6 +420,7 @@ class Sync {
         return out.toString();
     }
     int connTo = 2500;
+    volatile boolean forceApk = false;   // « Mettre à jour l'autre appareil » : appli renvoyée même si déjà envoyée
 
     /** L'autre appareil joignable (déjà vu par la synchro, sinon recherché) : hôte:port ou null. */
     String peer() {
@@ -505,7 +507,7 @@ class Sync {
                     while ((l = readLine(in)) != null && !l.isEmpty()) if (l.toLowerCase().startsWith("content-length:")) n = Long.parseLong(l.substring(15).trim());
                     if (st != null && st.contains(" 200 ") && n > 0) { try (OutputStream fo = new FileOutputStream(f)) { copy(in, fo, n); } if (f.length() == n) { pr.put("apkNew", f.getAbsolutePath()); sp.edit().putLong("apkGot", rav).putLong("apkLen", n).apply(); } }
                 }
-            } else if (lav > rav && rav > 0 && System.currentTimeMillis() - sp.getLong("apkSentT_" + ping.optString("dev") + "_" + rav + "_" + lav, 0) > 15 * 60000L) {   // renvoyée au plus toutes les 15 min tant que l'autre appareil n'est pas à jour
+            } else if (lav > rav && rav > 0 && (forceApk || System.currentTimeMillis() - sp.getLong("apkSentT_" + ping.optString("dev") + "_" + rav + "_" + lav, 0) > 15 * 60000L)) {   // renvoyée au plus toutes les 15 min tant que l'autre appareil n'est pas à jour
                 Res w = http(hp, "POST", "/apkin", new File(ctx.getApplicationInfo().sourceDir));
                 if (w.code == 200) { pr.put("apkSent", lav); sp.edit().putLong("apkSentT_" + ping.optString("dev") + "_" + rav + "_" + lav, System.currentTimeMillis()).apply(); }
             }

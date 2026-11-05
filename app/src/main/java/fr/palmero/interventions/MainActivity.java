@@ -213,8 +213,9 @@ public class MainActivity extends Activity {
                 android.content.pm.PackageInfo pi = getPackageManager().getPackageArchiveInfo(f.getAbsolutePath(), 0);
                 long cur = Build.VERSION.SDK_INT >= 28 ? getPackageManager().getPackageInfo(getPackageName(), 0).getLongVersionCode() : getPackageManager().getPackageInfo(getPackageName(), 0).versionCode;
                 long v = pi == null ? -1 : (Build.VERSION.SDK_INT >= 28 ? pi.getLongVersionCode() : pi.versionCode);
-                if (pi != null && getPackageName().equals(pi.packageName) && v > cur) runOnUiThread(() -> askApk(f));
-                else if (pi == null || v <= cur) f.delete();          // déjà installée (ou fichier abîmé) : place libérée
+                if (pi == null) { long got = getSharedPreferences("bisync", MODE_PRIVATE).getLong("apkGot", 0); if (got > cur) runOnUiThread(() -> askApk(f)); }   // version illisible : celle notée au téléchargement
+                else if (getPackageName().equals(pi.packageName) && v > cur) runOnUiThread(() -> askApk(f));
+                else if (v <= cur) f.delete();          // déjà installée : place libérée
             }
             pagesNewer();
         } catch (Exception ignored) { }
@@ -650,6 +651,36 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void openWr() { runOnUiThread(MainActivity.this::openWr); }
+
+        /** Mettre à jour l'autre appareil maintenant : page, WillRelais et appli dans les deux sens, compte rendu à window.biPeerUpd. */
+        @JavascriptInterface
+        public void updatePeer() {
+            new Thread(() -> {
+                String r;
+                try {
+                    Sync sy = syncer;
+                    if (sy == null || sy.token.isEmpty()) { android.content.SharedPreferences bs = getSharedPreferences("bisync", MODE_PRIVATE); sy = new Sync(MainActivity.this, api); sy.prepare(bs.getString("code", ""), bs.getString("dev", ""), bs.getString("name", "")); }
+                    if (sy.token.isEmpty()) r = "{\"error\":\"code de jumelage non réglé (Réglages → Synchro)\"}";
+                    else { sy.forceApk = true; String p = sy.pullUpdates(); sy.forceApk = false; JSONObject o = new JSONObject(); o.put("peers", new JSONArray(p)); o.put("tried", sy.tried); o.put("me", api.versionName()); r = o.toString(); }
+                } catch (Exception e) { r = "{\"error\":" + JSONObject.quote(String.valueOf(e.getMessage())) + "}"; }
+                final String js = "window.biPeerUpd&&window.biPeerUpd(" + JSONObject.quote(r) + ")";
+                runOnUiThread(() -> { if (web != null) web.evaluateJavascript(js, null); });
+            }, "peer-upd").start();
+        }
+
+        /** Envoyer l'appli installée comme fichier (Quick Share, Bluetooth, mail…) pour l'installer à la main sur l'autre appareil. */
+        @JavascriptInterface
+        public String shareApk() {
+            try {
+                File d = new File(getCacheDir(), "share"); d.mkdirs();
+                File out = new File(d, "Interventions-" + api.versionName() + ".apk");
+                try (InputStream in = new java.io.FileInputStream(getApplicationInfo().sourceDir); OutputStream o = new FileOutputStream(out)) { byte[] b = new byte[65536]; int n; while ((n = in.read(b)) > 0) o.write(b, 0, n); }
+                Uri u = FileProvider.getUriForFile(MainActivity.this, getPackageName() + ".files", out);
+                Intent s = new Intent(Intent.ACTION_SEND).setType("application/vnd.android.package-archive").putExtra(Intent.EXTRA_STREAM, u).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                runOnUiThread(() -> startActivity(Intent.createChooser(s, "Envoyer l'appli Interventions " + api.versionName())));
+                return "ok";
+            } catch (Exception e) { return "Envoi impossible : " + e.getMessage(); }
+        }
 
         /** Fin de la modification d'une photo de WillRelais : la photo (vide = annulé) repart vers WillRelais. */
         @JavascriptInterface
