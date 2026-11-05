@@ -151,7 +151,7 @@ public class MainActivity extends Activity {
         });
 
         hadAllFiles = api.canWrite();
-        Maj.schedule(getApplicationContext(), 60000L);   // mises à jour préchargées en arrière-plan
+        Maj.schedule(getApplicationContext(), 0);   // synchro et mises à jour en arrière-plan, même en veille
         beforeLoad();
         handleIntent(getIntent());
         askPermissions();
@@ -609,6 +609,21 @@ public class MainActivity extends Activity {
         try { startActivityForResult(i, REQ_ZIP); } catch (Exception e) { Toast.makeText(this, "Aucun sélecteur de fichiers", Toast.LENGTH_LONG).show(); }
     }
 
+    /** Synchro en veille : Android coupe le réseau des applis en veille prolongée sauf si l'économie de batterie les épargne. Demandé une fois. */
+    void askBattery() {
+        try {
+            android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+            if (pm == null || pm.isIgnoringBatteryOptimizations(getPackageName())) return;
+            android.content.SharedPreferences bs = getSharedPreferences("bisync", MODE_PRIVATE);
+            if (System.currentTimeMillis() - bs.getLong("battAsk", 0) < 7L * 86400000L) return;
+            bs.edit().putLong("battAsk", System.currentTimeMillis()).apply();
+            new AlertDialog.Builder(this).setTitle("Synchro en veille")
+                    .setMessage("Pour que le téléphone et la tablette échangent interventions, dossiers et mises à jour même écran éteint, Android doit laisser Interventions utiliser le Wi-Fi en veille.\n\nÀ l'écran suivant, choisis « Autoriser ». La consommation reste faible (une courte synchro toutes les 15 min environ).")
+                    .setPositiveButton("Continuer", (d, w) -> { try { startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + getPackageName()))); } catch (Exception e) { try { startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); } catch (Exception ignored) { } } })
+                    .setNegativeButton("Plus tard", null).show();
+        } catch (Exception ignored) { }
+    }
+
     void openWr() {
         try { startActivity(new Intent(this, WrActivity.class).setAction(Intent.ACTION_MAIN)); } catch (Exception e) { Toast.makeText(this, "WillRelais : " + e.getMessage(), Toast.LENGTH_LONG).show(); }
     }
@@ -667,6 +682,20 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> { if (web != null) web.evaluateJavascript(js, null); });
             }, "peer-upd").start();
         }
+
+        /** État de la synchro en veille : dernière synchro de fond, son compte rendu, appli épargnée par l'économie de batterie. */
+        @JavascriptInterface
+        public String majInfo() {
+            try {
+                android.content.SharedPreferences bs = getSharedPreferences("bisync", MODE_PRIVATE);
+                android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+                JSONObject o = new JSONObject(); o.put("t", bs.getLong("majT", 0)); o.put("r", bs.getString("majR", "")); o.put("batt", pm != null && pm.isIgnoringBatteryOptimizations(getPackageName()));
+                return o.toString();
+            } catch (Exception e) { return "{}"; }
+        }
+
+        @JavascriptInterface
+        public void battery() { runOnUiThread(() -> { getSharedPreferences("bisync", MODE_PRIVATE).edit().putLong("battAsk", 0).apply(); askBattery(); }); }
 
         /** Envoyer l'appli installée comme fichier (Quick Share, Bluetooth, mail…) pour l'installer à la main sur l'autre appareil. */
         @JavascriptInterface
@@ -778,7 +807,7 @@ public class MainActivity extends Activity {
         public void back() { runOnUiThread(() -> moveTaskToBack(true)); }   // après un pointage depuis le widget : retour à l'écran d'accueil
 
         @JavascriptInterface
-        public String netSyncStart(String code, String dev, String name) { try { return sync().start(code, dev, name); } catch (Exception e) { return "erreur"; } }   // synchro Wi-Fi : serveur local + annonce
+        public String netSyncStart(String code, String dev, String name) { try { String r = sync().start(code, dev, name); if ("ok".equals(r)) runOnUiThread(MainActivity.this::askBattery); return r; } catch (Exception e) { return "erreur"; } }   // synchro Wi-Fi : serveur local + annonce
 
         @JavascriptInterface
         public void netLive(String json) { try { sync().live(json); } catch (Exception ignored) { } }   // saisie envoyée en direct à l'autre appareil (fil à part)
