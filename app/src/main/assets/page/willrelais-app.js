@@ -55,13 +55,17 @@
     box = document.createElement('div'); box.id = 'wrfs';
     box.innerHTML = '<div class="h"><button id="wf-here" type="button">📱 Cet appareil</button><button id="wf-there" type="button">🔁 Autre appareil</button><span style="flex:1"></span><button id="wf-x" type="button">✕</button></div>' +
       '<div class="h"><input id="wf-q" type="search" placeholder="ex : tofer four"><button id="wf-go" type="button">🔍 Chercher</button></div>' +
-      '<div class="p"><button id="wf-up" type="button">⬆</button><span id="wf-path"></span></div><div class="msg" id="wf-msg"></div><div class="l" id="wf-l"></div><div class="f" id="wf-f"></div>';
+      '<div class="p"><button id="wf-up" type="button">⬆</button><span id="wf-path" style="flex:1"></span><button id="wf-sort" type="button" title="Tri">🕒 Récents</button></div><div class="msg" id="wf-msg"></div><div class="l" id="wf-l"></div><div class="f" id="wf-f"></div>';
     document.body.appendChild(box);
     $$('wf-x').onclick = close;
     $$('wf-here').onclick = function () { S.side = 'here'; S.find = null; load(); };
     $$('wf-there').onclick = function () { S.side = 'there'; S.find = null; load(); };
     $$('wf-up').onclick = function () { if (S.find) { S.find = null; return load(); } setPath(up(path())); load(); };
     $$('wf-go').onclick = search;
+    try { S.sort = localStorage.getItem('wl.sort') || 'date'; } catch (e) { S.sort = 'date'; }
+    var sortUi = function () { $$('wf-sort').textContent = S.sort === 'date' ? '🕒 Récents d\'abord' : '🔤 Nom'; };
+    sortUi();
+    $$('wf-sort').onclick = function () { S.sort = S.sort === 'date' ? 'nom' : 'date'; try { localStorage.setItem('wl.sort', S.sort); } catch (e) { } sortUi(); render(); };
     $$('wf-q').addEventListener('keydown', function (e) { if (e.key === 'Enter') search(); });
   }
   function $$(id) { return document.getElementById(id); }
@@ -91,19 +95,22 @@
     $$('wf-l').innerHTML = '<div class="msg">Recherche de « ' + esc(q) + ' » dans ' + esc('/' + path()) + '…</div>';
     call(S.side === 'here' ? 'lfind' : 'rfind', q, path()).then(function (r) { S.find = r; S.find.q = q; render(); }).catch(function (e) { $$('wf-l').innerHTML = ''; msg(e.message); });
   }
+  /* tri : le plus récent d'abord (par défaut) ou par nom */
+  function sorted(a, nm, mt) { return a.slice().sort(function (x, y) { return S.sort === 'nom' ? String(nm(x)).localeCompare(String(nm(y)), 'fr', { numeric: true }) : (mt(y) || 0) - (mt(x) || 0); }); }
   function isX(n) { return /\.xrs$/i.test(n); }
   function render() {
     var L = $$('wf-l'), h = '', dirs = (S.state.dirs || []);
     if (S.find) {
       $$('wf-path').textContent = (S.find.hits || []).length + ' résultat(s) pour « ' + S.find.q + ' » dans /' + path() + (S.find.more ? ' (liste limitée)' : '');
-      (S.find.hits || []).forEach(function (x, i) {
+      sorted(S.find.hits || [], function (x) { return base(x.path); }, function (x) { return x.mtime; }).forEach(function (x, i) {
         h += '<div class="it"><span>' + (x.dir ? '📁' : isX(x.path) ? '📐' : '📄') + '</span><div class="n">' + esc(base(x.path)) + '<small>/' + esc(up(x.path)) + (x.dir ? '' : ' · ' + size(x.size) + ' · ' + new Date(x.mtime).toLocaleString('fr-FR')) + '</small></div>' + acts(x.path, x.dir, i) + '</div>';
       });
     } else {
       var l = S.list || {}; $$('wf-path').textContent = '/' + path() + (S.side === 'there' ? '  (autre appareil)' : '');
-      (l.dirs || []).forEach(function (d, i) { var p = join(path(), d), sy = S.side === 'here' && dirs.some(function (x) { return p === x || p.indexOf(x + '/') === 0; });
-        h += '<div class="it" data-d="' + esc(p) + '"><span>📁</span><div class="n">' + esc(d) + (sy ? ' <small>🔁 partagé avec l\'autre appareil</small>' : '') + '</div></div>'; });
-      (l.files || []).forEach(function (f, i) { var p = join(path(), f.name);
+      var dl = (l.dirs || []).map(function (d, i) { return { n: d, m: (l.dirsM || [])[i] || 0 }; });
+      sorted(dl, function (x) { return x.n; }, function (x) { return x.m; }).forEach(function (o, i) { var d = o.n, p = join(path(), d), sy = S.side === 'here' && dirs.some(function (x) { return p === x || p.indexOf(x + '/') === 0; });
+        h += '<div class="it" data-d="' + esc(p) + '"><span>📁</span><div class="n">' + esc(d) + ((o.m || sy) ? '<small>' + (o.m ? new Date(o.m).toLocaleString('fr-FR') : '') + (sy ? (o.m ? ' · ' : '') + '🔁 partagé avec l\'autre appareil' : '') + '</small>' : '') + '</div></div>'; });
+      sorted(l.files || [], function (f) { return f.name; }, function (f) { return f.mtime; }).forEach(function (f, i) { var p = join(path(), f.name);
         h += '<div class="it"><span>' + (isX(f.name) ? '📐' : '📄') + '</span><div class="n">' + esc(f.name) + '<small>' + size(f.size) + ' · ' + new Date(f.mtime).toLocaleString('fr-FR') + '</small></div>' + acts(p, false) + '</div>'; });
       if (!h) h = '<div class="msg" style="color:#9ca3af">' + (S.side === 'here' ? 'Aucun schéma ici.' : 'Dossier vide.') + '</div>';
     }

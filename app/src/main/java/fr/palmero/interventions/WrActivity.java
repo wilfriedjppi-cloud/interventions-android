@@ -138,17 +138,17 @@ public class WrActivity extends MainActivity {
             try {
                 File d = Api.extFile(rel); JSONObject o = new JSONObject();
                 o.put("path", d == null ? "" : Api.relOf(d)); o.put("exists", d != null && d.isDirectory());
-                org.json.JSONArray ds = new org.json.JSONArray(), fs = new org.json.JSONArray();
+                org.json.JSONArray ds = new org.json.JSONArray(), fs = new org.json.JSONArray(), dm = new org.json.JSONArray();
                 File[] l = d == null ? null : d.listFiles();
                 if (l != null) {
                     java.util.Arrays.sort(l, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
                     for (File f : l) {
                         String n = f.getName(); if (n.startsWith(".")) continue;
-                        if (f.isDirectory()) { if (!(rel == null || rel.isEmpty()) || !n.equalsIgnoreCase("Android")) ds.put(n); }
+                        if (f.isDirectory()) { if (!(rel == null || rel.isEmpty()) || !n.equalsIgnoreCase("Android")) { ds.put(n); dm.put(f.lastModified()); } }
                         else if (Api.isWrFile(n)) fs.put(new JSONObject().put("name", n).put("size", f.length()).put("mtime", f.lastModified()));
                     }
                 }
-                o.put("dirs", ds); o.put("files", fs); o.put("wr", d != null && api.inWrDirs(Api.relOf(d)));
+                o.put("dirs", ds); o.put("dirsM", dm); o.put("files", fs); o.put("wr", d != null && api.inWrDirs(Api.relOf(d)));
                 return o.toString();
             } catch (Exception e) { return "{\"dirs\":[],\"files\":[]}"; }
         }

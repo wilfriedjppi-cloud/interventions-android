@@ -345,17 +345,17 @@ class Sync {
         JSONObject o = new JSONObject();
         try {
             File d = Api.extFile(rel); o.put("path", d == null ? "" : Api.relOf(d)); o.put("name", name);
-            JSONArray ds = new JSONArray(), fs = new JSONArray();
+            JSONArray ds = new JSONArray(), fs = new JSONArray(), dm = new JSONArray();
             File[] l = d == null ? null : d.listFiles();
             if (l != null) {
                 java.util.Arrays.sort(l, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
                 for (File f : l) {
                     String n = f.getName(); if (n.startsWith(".")) continue;
-                    if (f.isDirectory()) { if (!Api.relOf(f).equalsIgnoreCase("Android")) ds.put(n); }
+                    if (f.isDirectory()) { if (!Api.relOf(f).equalsIgnoreCase("Android")) { ds.put(n); dm.put(f.lastModified()); } }
                     else fs.put(new JSONObject().put("name", n).put("size", f.length()).put("mtime", f.lastModified()));
                 }
             }
-            o.put("dirs", ds); o.put("files", fs);
+            o.put("dirs", ds); o.put("dirsM", dm); o.put("files", fs);   // dirsM : date des dossiers (tri par date)
         } catch (Exception ignored) { }
         return o;
     }
