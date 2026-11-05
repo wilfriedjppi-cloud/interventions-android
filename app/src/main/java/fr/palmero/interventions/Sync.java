@@ -392,6 +392,34 @@ class Sync {
     }
     String tried = "";
 
+    /** Code de jumelage sans démarrer le serveur (mises à jour en arrière-plan). */
+    void prepare(String code, String devId, String devName) {
+        token = code == null || code.trim().length() < 4 ? "" : sha("bi-sync|" + code.trim());
+        dev = devId == null ? "" : devId; name = devName == null ? "" : devName;
+    }
+
+    /** Mises à jour seulement (page, page WillRelais, appli) avec les appareils joignables : récupère ou envoie la plus récente. */
+    String pullUpdates() {
+        JSONArray out = new JSONArray();
+        if (token.isEmpty() || !busy.compareAndSet(false, true)) return "[]";
+        int ct = connTo; connTo = 1200;
+        try {
+            Set<String> seen = new HashSet<>();
+            for (String hp : candidates(null)) {
+                try {
+                    Res r = http(hp, "GET", "/ping", null); if (r.code != 200) continue;
+                    JSONObject o = new JSONObject(new String(r.body, StandardCharsets.UTF_8)); String pd = o.optString("dev");
+                    if (pd.isEmpty() || pd.equals(dev) || seen.contains(pd)) continue;
+                    seen.add(pd); remember(hp); liveHosts.add(hp);
+                    JSONObject pr = new JSONObject(); pr.put("host", hp); pr.put("dev", pd);
+                    connTo = 2500; updates(hp, o, pr); connTo = 1200; out.put(pr);
+                } catch (Exception ignored) { }
+            }
+        } finally { connTo = ct; busy.set(false); }
+        return out.toString();
+    }
+    int connTo = 2500;
+
     /** L'autre appareil joignable (déjà vu par la synchro, sinon recherché) : hôte:port ou null. */
     String peer() {
         for (int w = 0; w < 8; w++) { boolean any; synchronized (found) { any = !found.isEmpty(); } if (any || !liveHosts.isEmpty()) break; try { Thread.sleep(500); } catch (Exception ignored) { } }   // découverte Wi-Fi en cours (WillRelais ouvert seul)
@@ -515,7 +543,7 @@ class Sync {
         int c = hp.lastIndexOf(':');
         String host = hp.substring(0, c); int p = Integer.parseInt(hp.substring(c + 1));
         try (Socket s = new Socket()) {
-            s.connect(new InetSocketAddress(host, p), 2500);
+            s.connect(new InetSocketAddress(host, p), connTo);
             s.setSoTimeout(60000);
             OutputStream out = s.getOutputStream();
             long len = upload == null ? 0 : upload.length();

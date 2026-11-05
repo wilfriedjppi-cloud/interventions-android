@@ -1,5 +1,5 @@
-<!doctype html><!-- interventions-sig: MEUCIQDVkUZObyOTwogbpupTBDcOIXhEeNv03ILISOmpmhR5UQIgYgP5TNY2xVnMu0Tuu2eqzrTaSWIgD5QNslhTqxLD618= -->
-<!-- willrelais-version: 12 -->
+<!doctype html><!-- interventions-sig: MEYCIQCz5OrxmSffcbYjbkfIFAc8dPqL0Pjjwj1wY1PEP5cVUwIhANqyHnKsuH6alcJCHzuOs8PEwOBQWmkAeSZGDIXbcIdt -->
+<!-- willrelais-version: 13 -->
 <html lang="fr">
 <head>
 <meta charset="utf-8">
@@ -942,6 +942,23 @@ initLib();
   window.__wlPdf=async()=>{ const pages=[]; for(let i=0;i<M.folios.length;i++){ $('status').textContent=`PDF : folio ${i+1}/${M.folios.length}…`; pages.push(await folioJpeg(i)); } updateTools(); return pdfOf(pages,baseName()); };
   shp.onclick=async()=>{ if(!M) return alert('Ouvre d\'abord un schéma.'); shp.disabled=true;
     try{ const b=await window.__wlPdf(); await shareFile(b,baseName()+'.pdf','application/pdf'); }catch(e){ alert('PDF impossible : '+(e.message||e)); } finally{ shp.disabled=false; updateTools(); } };
+
+  /* ---------- ⓘ bulle d'information : auteur, date et version de la mise à jour ---------- */
+  const WLI={v:'13',d:'05/11/2026',a:'Wilfried Rouvière'};
+  const ib=document.createElement('button'); ib.id='bInfo'; ib.textContent='ⓘ'; ib.title='Informations'; ib.style.cssText='border-radius:50%;width:40px;min-width:40px;padding:0;justify-content:center;font-size:18px';
+  fb.after(ib);
+  const ip=document.createElement('div'); ip.id='wlinfo'; ip.style.cssText='display:none;position:fixed;z-index:40;right:8px;top:56px;max-width:min(340px,calc(100vw - 16px));background:#fff;color:#111;border-radius:12px;padding:12px 14px;box-shadow:0 10px 30px #0008;font-size:13px;line-height:1.5';
+  document.body.appendChild(ip);
+  ib.onclick=(e)=>{ e.stopPropagation(); if(ip.style.display==='block'){ip.style.display='none';return;}
+    let app=''; try{ if(window.AndroidApi&&AndroidApi.appVersion) app=AndroidApi.appVersion(); }catch(x){}
+    let fv=''; try{ const v=M&&M.g.Version; if(v) fv=F(v.lines[1]||'')[0]+' — '+F(v.lines[2]||'')[0]; }catch(x){}
+    ip.innerHTML=`<div style="font-weight:700;font-size:15px;margin-bottom:4px">WillRelais</div>`+
+      `<div>Version : <b>v${WLI.v}</b></div><div>Mise à jour du : <b>${WLI.d}</b></div><div>Auteur : <b>${esc(WLI.a)}</b></div>`+
+      (app?`<div>Appli Android : ${esc(app)}</div>`:'')+
+      (M?`<div style="margin-top:6px;color:#4b5563">Schéma : ${esc(fname)}${fv?`<br>Format WinRelais : ${esc(fv)}`:''}</div>`:'')+
+      `<div style="margin-top:6px;color:#6b7280;font-size:12px">Lit et réécrit les schémas WinRelais (.xrs) sans perte.</div>`;
+    ip.style.display='block'; };
+  document.addEventListener('pointerdown',e=>{ if(ip.style.display==='block'&&!e.target.closest('#wlinfo')&&e.target!==ib) ip.style.display='none'; },true);
 
   /* ---------- grille de points ---------- */
   let gridOn=false; try{gridOn=localStorage.getItem('wl.grid')==='1';}catch(e){}

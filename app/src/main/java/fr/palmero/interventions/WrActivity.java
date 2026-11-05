@@ -36,7 +36,13 @@ public class WrActivity extends MainActivity {
         new Thread(this::ensureSync, "wr-sync-start").start();   // l'autre appareil peut parcourir celui-ci même si Interventions est fermée
     }
 
-    @Override void askPermissions() { }   // demandées par Interventions ; sans accès aux fichiers, l'enregistrement passe par « Partager »
+    @Override void askPermissions() { }
+
+    @Override void pagesNewer() {   // page WillRelais plus récente reçue en veille : rechargée au retour
+        if (!pageReady) return;
+        int nv = api.wrLocalVersion();
+        if (api.servedWv > 0 && nv > api.servedWv) { final int v = nv; runOnUiThread(() -> reloadPage("WillRelais mis à jour : v" + v)); }
+    }   // demandées par Interventions ; sans accès aux fichiers, l'enregistrement passe par « Partager »
 
     /** Bibliothèques de symboles en ligne (typonrelais.com) : chargées par l'appli, la page les reçoit sans blocage CORS. */
     @Override WebResourceResponse intercept(WebResourceRequest r) {

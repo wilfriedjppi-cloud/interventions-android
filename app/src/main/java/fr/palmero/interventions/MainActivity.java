@@ -151,6 +151,7 @@ public class MainActivity extends Activity {
         });
 
         hadAllFiles = api.canWrite();
+        Maj.schedule(getApplicationContext(), 60000L);   // mises à jour préchargées en arrière-plan
         beforeLoad();
         handleIntent(getIntent());
         askPermissions();
@@ -201,6 +202,28 @@ public class MainActivity extends Activity {
         boolean now = api.canWrite();
         if (now && !hadAllFiles && web != null) web.reload();      // accès accordé : la page refait son essai d'écriture
         hadAllFiles = now;
+        IO.execute(this::checkPreloaded);
+    }
+
+    /** Au retour dans l'appli : appli préchargée plus récente → installation proposée ; page plus récente → rechargée. */
+    void checkPreloaded() {
+        try {
+            File f = new File(new File(getCacheDir(), "maj"), "Interventions-recue.apk");
+            if (f.isFile()) {
+                android.content.pm.PackageInfo pi = getPackageManager().getPackageArchiveInfo(f.getAbsolutePath(), 0);
+                long cur = Build.VERSION.SDK_INT >= 28 ? getPackageManager().getPackageInfo(getPackageName(), 0).getLongVersionCode() : getPackageManager().getPackageInfo(getPackageName(), 0).versionCode;
+                long v = pi == null ? -1 : (Build.VERSION.SDK_INT >= 28 ? pi.getLongVersionCode() : pi.versionCode);
+                if (pi != null && getPackageName().equals(pi.packageName) && v > cur) runOnUiThread(() -> askApk(f));
+                else if (pi == null || v <= cur) f.delete();          // déjà installée (ou fichier abîmé) : place libérée
+            }
+            pagesNewer();
+        } catch (Exception ignored) { }
+    }
+
+    void pagesNewer() {
+        if (!pageReady) return;
+        int nv = Api.pageVersion(api.pageBytes());
+        if (api.servedPv > 0 && nv > api.servedPv) { final int v = nv; runOnUiThread(() -> reloadPage("Page mise à jour depuis l'autre appareil : v" + v)); }
     }
 
     /* ---------- choix de fichiers et appareil photo ---------- */

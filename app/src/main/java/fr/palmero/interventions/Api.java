@@ -38,7 +38,7 @@ import java.util.Locale;
 
 /** Le même service que le serveur QPython (/api/…), mais dans l'appli : fichiers dans Documents/Gestion interventions. */
 class Api {
-    static final String VERSION = "appli-3.9";
+    static final String VERSION = "appli-3.10";
     static final String[] SUBS = {"", "Gestion interventions", "Gestion interventions/config/global", "Gestion interventions/config/utilisateur",
             "Gestion interventions/données/OI", "Gestion interventions/données/rapports", "Gestion interventions/données/backup",
             "Gestion interventions/données/gestion", "Gestion interventions/appli"};
@@ -394,8 +394,10 @@ class Api {
 
     String htmlSource() { return source.isEmpty() ? mode() : source; }
 
+    int servedPv = -1, servedWv = -1;   // versions des pages affichées : une version plus récente arrivée en veille recharge la page au retour
     WebResourceResponse page() throws Exception {
-        String t = new String(pageBytes(), StandardCharsets.UTF_8);
+        byte[] pb0 = pageBytes(); servedPv = pageVersion(pb0);
+        String t = new String(pb0, StandardCharsets.UTF_8);
         int i = t.indexOf("<head>");
         t = i >= 0 ? t.substring(0, i + 6) + SHIM + t.substring(i + 6) : SHIM + t;
         return resp(200, "text/html", t.getBytes(StandardCharsets.UTF_8));
@@ -494,7 +496,7 @@ class Api {
     }
 
     WebResourceResponse wrPage() throws Exception {
-        byte[] b = wrBytes();
+        byte[] b = wrBytes(); servedWv = wrVersion(b);
         String t = b == null ? "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'><body style='font:16px sans-serif;padding:24px'>"
                 + "<h3>WillRelais</h3><p>Page absente du dossier " + appDir().getAbsolutePath() + ".</p><p>Installe-la avec « Ouvrir avec → Interventions » sur le fichier willrelais-vN.html, ou par la synchro avec l'autre appareil.</p>"
                 : new String(b, StandardCharsets.UTF_8);
