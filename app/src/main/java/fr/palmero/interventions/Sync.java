@@ -417,10 +417,14 @@ class Sync {
         return l.startsWith("config/") || (l.startsWith("données/gestion/") && l.endsWith(".xls"));
     }
 
+    /** Hors somme de contrôle du voyant : fichiers refaits par chaque appareil, et états sync/<appareil>.json
+     *  (réécrits à chaque synchro des données ; ils restent transférés, dans un seul sens, mais ne font plus clignoter le voyant). */
+    static boolean noSum(String k) { return derived(k) || (k != null && k.startsWith("sync/") && k.endsWith(".json")); }
+
     String treeSum() {
         try {
             JSONObject l = listJson(); java.util.List<String> ks = new java.util.ArrayList<>();
-            java.util.Iterator<String> it = l.keys(); while (it.hasNext()) { String k = it.next(); if (!k.endsWith("/") && !derived(k)) ks.add(k); }
+            java.util.Iterator<String> it = l.keys(); while (it.hasNext()) { String k = it.next(); if (!k.endsWith("/") && !noSum(k)) ks.add(k); }
             java.util.Collections.sort(ks);
             BAD.keySet().retainAll(ks);
             java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-1");
@@ -504,7 +508,7 @@ class Sync {
                                     java.util.Set<String> all = new java.util.TreeSet<>(); java.util.Iterator<String> i1 = t.keys(); while (i1.hasNext()) all.add(i1.next());
                                     java.util.Iterator<String> i2 = m.keys(); while (i2.hasNext()) { String k = i2.next(); if (!k.endsWith("/")) all.add(k); }
                                     JSONArray bd = new JSONArray();
-                                    for (String k : all) { if (derived(k)) continue; if (BAD.containsKey(k) || t.optString(k).startsWith("!")) { if (bd.length() < 10) bd.put((k.startsWith("~ext/") ? k.substring(5) : k) + (BAD.containsKey(k) ? " (illisible ici)" : " (illisible là-bas)")); continue; } long[] c; synchronized (CRC) { c = CRC.get(k); } String mc = (c != null && m.has(k)) ? Long.toHexString(c[2]) : ""; if (!mc.equals(t.optString(k))) { nd++; if (df.length() < 5) df.put(k.startsWith("~ext/") ? k.substring(5) : k);
+                                    for (String k : all) { if (noSum(k)) continue; if (BAD.containsKey(k) || t.optString(k).startsWith("!")) { if (bd.length() < 10) bd.put((k.startsWith("~ext/") ? k.substring(5) : k) + (BAD.containsKey(k) ? " (illisible ici)" : " (illisible là-bas)")); continue; } long[] c; synchronized (CRC) { c = CRC.get(k); } String mc = (c != null && m.has(k)) ? Long.toHexString(c[2]) : ""; if (!mc.equals(t.optString(k))) { nd++; if (df.length() < 5) df.put(k.startsWith("~ext/") ? k.substring(5) : k);
                                         if (nd <= 8) { JSONArray le = m.optJSONArray(k); dd.append("\n    ").append(esc(k)).append(" | ici : ").append(le == null ? "absent de la liste" : "date " + le.optLong(0) + " taille " + le.optLong(1)).append(", somme ").append(c == null ? "aucune" : Long.toHexString(c[2]) + (le != null && (c[0] != le.optLong(0) || c[1] != le.optLong(1)) ? " (périmée)" : "")).append(BAD.containsKey(k) ? " [" + BAD.get(k) + "]" : "").append(" | là-bas : ").append(t.has(k) ? "somme " + t.optString(k) : "absent"); } } }
                                     o.put("ndiff", nd); o.put("diff", df); if (bd.length() > 0) o.put("bad", bd);
                                     if (nd == 0 && !p.optBoolean("dirty")) o.put("theirs", o.optString("mine"));   // seuls des fichiers illisibles diffèrent : rien à synchroniser
