@@ -424,7 +424,7 @@ class Sync {
     String treeSum() {
         try {
             JSONObject l = listJson(); java.util.List<String> ks = new java.util.ArrayList<>();
-            java.util.Iterator<String> it = l.keys(); while (it.hasNext()) { String k = it.next(); if (!k.endsWith("/") && !noSum(k)) ks.add(k); }
+            java.util.Iterator<String> it = l.keys(); while (it.hasNext()) { String k = it.next(); if (!k.endsWith("/") && !derived(k)) ks.add(k); }   // somme calculée aussi pour sync/*.json (envoi évité si contenu identique), mais hors empreinte du voyant
             java.util.Collections.sort(ks);
             BAD.keySet().retainAll(ks);
             java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-1");
@@ -439,7 +439,7 @@ class Sync {
                     catch (Exception e) { bad(k, (f.isFile() ? "" : "inaccessible (créé par une autre appli ou une installation précédente ?) ") + e.getMessage()); continue; }   // un fichier illisible (droits) ne fausse plus toute la somme
                     c = new long[]{mt, sz, cr.getValue()}; synchronized (CRC) { CRC.put(k, c); } BAD.remove(k);
                 }
-                md.update((k + ":" + Long.toHexString(c[2]) + ":" + sz + "\n").getBytes(StandardCharsets.UTF_8));
+                if (!noSum(k)) md.update((k + ":" + Long.toHexString(c[2]) + ":" + sz + "\n").getBytes(StandardCharsets.UTF_8));
             }
             StringBuilder h = new StringBuilder(); for (byte b : md.digest()) h.append(String.format("%02x", b));
             return h.substring(0, 16);
@@ -796,10 +796,19 @@ class Sync {
         long t0 = System.currentTimeMillis(); TLog.w("SYNC", "début (" + Thread.currentThread().getName() + ") candidats : " + candidates(manual));
         try {
             Set<String> seen = new HashSet<>();
-            for (String hp : candidates(manual)) {
+            java.util.List<String> cands = new java.util.ArrayList<>(candidates(manual));
+            final Map<String, Object> probe = new java.util.concurrent.ConcurrentHashMap<>();   // tous les candidats essayés en même temps : un appareil absent ne fait plus attendre les autres
+            final String pq = "/ping?" + verQuery() + "&wd=" + URLEncoder.encode(new JSONArray(api.wrDirs()).toString(), "UTF-8");
+            java.util.List<Thread> pts = new java.util.ArrayList<>();
+            for (final String hp : cands) { Thread th = new Thread(() -> { try { probe.put(hp, http(hp, "GET", pq, null)); } catch (Exception e) { probe.put(hp, e); } }, "ping"); th.start(); pts.add(th); }
+            for (Thread th : pts) try { th.join(4000); } catch (Exception ignored) { }
+            for (String hp : cands) {
                 JSONObject pr = new JSONObject(); pr.put("host", hp);
                 try {
-                    Res r = http(hp, "GET", "/ping?" + verQuery() + "&wd=" + URLEncoder.encode(new JSONArray(api.wrDirs()).toString(), "UTF-8"), null);
+                    Object pv = probe.get(hp);
+                    if (pv == null) throw new Exception("pas de réponse");
+                    if (pv instanceof Exception) throw (Exception) pv;
+                    Res r = (Res) pv;
                     if (r.code == 403) { pr.put("error", "code de jumelage différent"); peers.put(pr); TLog.w("SYNC", hp + " : code de jumelage différent"); continue; }
                     if (r.code != 200) { TLog.w("SYNC", hp + " : réponse " + r.code); continue; }
                     JSONObject o = new JSONObject(new String(r.body, StandardCharsets.UTF_8));
@@ -878,7 +887,7 @@ class Sync {
                 } catch (Exception e) { TLog.w("ERR", p + " : " + e); }
                 continue;
             }
-            boolean own = p.equals("sync/" + dev + ".json"), theirs = p.equals("sync/" + pd + ".json");   // état de chaque appareil : écrit par lui seul, recopié dans un seul sens
+            boolean own = p.startsWith("sync/" + dev + ".") && p.endsWith(".json"), theirs = p.startsWith("sync/" + pd + ".") && p.endsWith(".json");   // état de chaque appareil : écrit par lui seul, recopié dans un seul sens
             if ((own && l == null) || (theirs && r == null)) continue;
             if (f == null) { skip++; TLog.w("GARDE", p + " ignoré : chemin refusé sur cet appareil (" + (l != null ? "ici" : "") + (r != null ? (l != null ? " et " : "") + "là-bas" : "") + ")"); continue; }
             try {
@@ -893,7 +902,7 @@ class Sync {
                     if ((lc.isEmpty() || rc.isEmpty()) && !own && !theirs) missLog(p, esc(p) + " : somme " + (lc.isEmpty() ? "indisponible ici" + (BAD.containsKey(p) ? " (" + BAD.get(p) + ")" : "") : "ici " + lc) + ", " + (rc.isEmpty() ? "indisponible là-bas" : "là-bas " + rc) + " ; date ici " + lm + " là-bas " + rm + ", taille " + l.getLong(1) + "/" + r.getLong(1) + (lch ? ", modifié ici" : "") + (rch ? ", modifié là-bas" : ""));
                     if (!lc.isEmpty() && lc.equals(rc)) { NM.put(p, new JSONArray().put(lm).put(rm).put(l.getLong(1))); continue; }   // même contenu : rien à faire
                     if (own || theirs) {
-                        boolean differ = l.getLong(1) != r.getLong(1) || Math.abs(lm - rm) > 2000 || (!lc.isEmpty() && !rc.isEmpty() && !lc.equals(rc));
+                        boolean differ = !lc.isEmpty() && !rc.isEmpty() && !rc.startsWith("!") ? !lc.equals(rc) : (l.getLong(1) != r.getLong(1) || Math.abs(lm - rm) > 2000);   // même contenu (somme de contrôle) : rien à renvoyer, même si le fichier a été réécrit
                         if (!differ) { NM.put(p, new JSONArray().put(lm).put(rm).put(l.getLong(1))); continue; }
                         lch = own; rch = theirs;
                     } else if (!lc.isEmpty() && !rc.isEmpty() && !lch && !rch) {   // contenu différent alors que la date et la taille ne l'indiquent pas : le plus récent gagne, sinon le même côté des deux appareils
