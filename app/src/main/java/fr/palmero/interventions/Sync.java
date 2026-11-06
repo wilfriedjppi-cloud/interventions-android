@@ -61,6 +61,7 @@ class Sync {
     java.util.function.Consumer<File> onApk;                   // appli reçue de l'autre appareil                                         // l'autre appareil vient de finir une synchro avec celui-ci
 
     Sync(Context c, Api a) {
+        TLog.init(c);
         ctx = c.getApplicationContext();
         api = a;
         sp = c.getSharedPreferences("bisync", Context.MODE_PRIVATE);
@@ -183,6 +184,7 @@ class Sync {
                 JSONObject o = new JSONObject(); o.put("ok", true); o.put("dev", dev); o.put("name", name); o.put("busy", busy.get());
                 o.put("pv", Api.pageVersion(api.pageBytes())); o.put("av", appCode()); o.put("wv", Math.max(0, api.wrLocalVersion())); o.put("wd", new JSONArray(api.wrDirs()));
                 try { String wd = qp.get("wd"); if (wd != null) { JSONArray wa = new JSONArray(wd); java.util.List<String> wl = new java.util.ArrayList<>(); for (int i = 0; i < wa.length(); i++) wl.add(wa.optString(i)); api.wrAddDirs(wl); } } catch (Exception ignored) { }   // dossiers WillRelais de l'autre appareil
+                verLog("connexion de " + s.getInetAddress().getHostAddress(), qp);
                 reply(out, 200, o.toString()); return;
             }
             if (path.equals("/live")) {                       // saisie en direct de l'autre appareil (petit message) : passe même pendant une synchro
@@ -193,9 +195,12 @@ class Sync {
                 try { reply(out, 200, "{\"ok\":true}"); } catch (Exception ignored) { }
                 return;
             }
+            if (!path.equals("/sum") && !path.equals("/sums") && !path.equals("/live")) TLog.w("SERV", path + (qp.get("p") != null ? " " + qp.get("p") : "") + (len > 0 ? " " + len + " o" : "") + " <- " + s.getInetAddress().getHostAddress());
+            if (path.equals("/log")) { sendBytes(out, TLog.tail(1500000).getBytes(StandardCharsets.UTF_8)); return; }   // journal de cet appareil, joint à celui de l'autre pour le débogage
             if (path.equals("/sums")) { treeSum(); JSONObject o = new JSONObject(), cur = listJson(); java.util.Iterator<String> ki = cur.keys(); while (ki.hasNext()) { String k = ki.next(); long[] cc; synchronized (CRC) { cc = CRC.get(k); } if (cc != null) o.put(k, Long.toHexString(cc[2])); } reply(out, 200, o.toString()); return; }   // détail par fichier (diagnostic du voyant)
             if (path.equals("/sum")) {                                   // somme de contrôle des fichiers synchronisés + saisie en attente
-                JSONObject o = new JSONObject(); o.put("dev", dev); o.put("name", name); o.put("sum", treeSum()); o.put("dirty", myDirty); o.put("busy", busy.get());
+                JSONObject o = new JSONObject(); o.put("dev", dev); o.put("name", name); o.put("sum", treeSum()); o.put("dirty", myDirty); o.put("busy", busy.get()); o.put("pv", Api.pageVersion(api.pageBytes())); o.put("av", appCode()); o.put("wv", Math.max(0, api.wrLocalVersion()));
+                verLog("demande de " + s.getInetAddress().getHostAddress(), qp);
                 reply(out, 200, o.toString()); return;
             }
             if (path.equals("/xls")) { reply(out, 200, xls(qp.get("p")).toString()); return; }          // parcourir les dossiers de cet appareil depuis l'autre
@@ -425,7 +430,14 @@ class Sync {
     }
 
     /** État pour le voyant : autre appareil joignable ? sommes de contrôle des deux côtés, saisie en attente là-bas. */
+    String lastState = "";
     String state(boolean dirty) {
+        String r = state0(dirty);
+        try { JSONObject o = new JSONObject(r); String k = o.optBoolean("conn") ? (o.optString("mine").equals(o.optString("theirs")) ? "identique" : "différent " + o.optString("mine") + "/" + o.optString("theirs") + (o.has("ndiff") ? " " + o.optInt("ndiff") + " fichier(s) " + o.optJSONArray("diff") : "")) + (o.optBoolean("pdirty") ? " saisie là-bas" : "") + (dirty ? " saisie ici" : "") : "non connecté";
+            if (!k.equals(lastState)) { lastState = k; TLog.w("VOYANT", (o.optBoolean("conn") ? o.optString("name") + " : " : "") + k); } } catch (Exception ignored) { }
+        return r;
+    }
+    String state0(boolean dirty) {
         myDirty = dirty;
         JSONObject o = new JSONObject();
         try {
@@ -437,12 +449,14 @@ class Sync {
             try {
                 for (String hp : hs) {
                     try {
-                        Res r = http(hp, "GET", "/sum", null);
+                        Res r = http(hp, "GET", "/sum?" + verQuery(), null);
                         if (r.code == 200) {
                             JSONObject p = new JSONObject(new String(r.body, StandardCharsets.UTF_8));
                             if (p.optString("dev").equals(dev)) continue;
                             liveHosts.add(hp); remember(hp);
                             o.put("conn", true); o.put("name", p.optString("name")); o.put("theirs", p.optString("sum")); o.put("pdirty", p.optBoolean("dirty")); o.put("pbusy", p.optBoolean("busy"));
+                            String vd = verDiff(p); o.put("ver", vd.isEmpty() ? "identiques" : vd);
+                            if (!vd.isEmpty() && p.has("pv")) verSync(hp, p, vd);   // versions différentes : la plus récente passe sur l'autre
                             if (!p.optString("sum").equals(o.optString("mine"))) try {                       // fichiers qui diffèrent (5 premiers)
                                 Res d = http(hp, "GET", "/sums", null);
                                 if (d.code == 200) {
@@ -480,11 +494,12 @@ class Sync {
             Set<String> seen = new HashSet<>(), cs = candidates(null); tried = String.join(", ", cs);
             for (String hp : cs) {
                 try {
-                    Res r = http(hp, "GET", "/ping", null); if (r.code != 200) continue;
+                    Res r = http(hp, "GET", "/ping?" + verQuery(), null); if (r.code != 200) continue;
                     JSONObject o = new JSONObject(new String(r.body, StandardCharsets.UTF_8)); String pd = o.optString("dev");
                     if (pd.isEmpty() || pd.equals(dev) || seen.contains(pd)) continue;
                     seen.add(pd); remember(hp); liveHosts.add(hp);
                     JSONObject pr = new JSONObject(); pr.put("host", hp); pr.put("dev", pd); pr.put("name", o.optString("name")); pr.put("av", o.optLong("av", 0)); pr.put("pv", o.optInt("pv", 0)); pr.put("wv", o.optInt("wv", 0)); pr.put("lav", appCode());
+                    TLog.w("VERSION", o.optString("name") + " : " + (verDiff(o).isEmpty() ? "identiques" : verDiff(o)));
                     connTo = 2500; updates(hp, o, pr); connTo = 1200; out.put(pr);
                 } catch (Exception ignored) { }
             }
@@ -495,13 +510,18 @@ class Sync {
     volatile boolean forceApk = false;   // « Mettre à jour l'autre appareil » : appli renvoyée même si déjà envoyée
 
     /** L'autre appareil joignable (déjà vu par la synchro, sinon recherché) : hôte:port ou null. */
+    /** Journal de l'autre appareil (vide s'il est injoignable). */
+    String peerLog() {
+        try { String hp = peer(); if (hp == null) return ""; Res r = http(hp, "GET", "/log", null); return r.code == 200 ? new String(r.body, StandardCharsets.UTF_8) : ""; } catch (Exception e) { return ""; }
+    }
+
     String peer() {
         for (int w = 0; w < 8; w++) { boolean any; synchronized (found) { any = !found.isEmpty(); } if (any || !liveHosts.isEmpty()) break; try { Thread.sleep(500); } catch (Exception ignored) { } }   // découverte Wi-Fi en cours (WillRelais ouvert seul)
         java.util.List<String> l = new java.util.ArrayList<>(liveHosts);
         for (String c : candidates(null)) if (!l.contains(c)) l.add(c);
         tried = String.join(", ", l);
         for (String hp : l) {
-            try { Res r = http(hp, "GET", "/ping", null); if (r.code != 200) continue; JSONObject o = new JSONObject(new String(r.body, StandardCharsets.UTF_8)); if (!o.optString("dev").equals(dev) && !o.optString("dev").isEmpty()) { liveHosts.add(hp); remember(hp); return hp; } } catch (Exception ignored) { }
+            try { Res r = http(hp, "GET", "/ping?" + verQuery(), null); if (r.code != 200) continue; JSONObject o = new JSONObject(new String(r.body, StandardCharsets.UTF_8)); if (!o.optString("dev").equals(dev) && !o.optString("dev").isEmpty()) { liveHosts.add(hp); remember(hp); return hp; } } catch (Exception ignored) { }
         }
         return null;
     }
@@ -541,29 +561,66 @@ class Sync {
         out.write(("HTTP/1.0 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: " + b.length + "\r\n\r\n").getBytes(StandardCharsets.UTF_8)); out.write(b); out.flush();
     }
 
+    /* ---------- comparaison des versions (page, WillRelais, appli) à chaque connexion ---------- */
+    String verQuery() { return "pv=" + Api.pageVersion(api.pageBytes()) + "&av=" + appCode() + "&wv=" + Math.max(0, api.wrLocalVersion()) + "&port=" + port; }
+    /** Différences de version avec l'autre appareil ("" si identiques), ex : « page v249→v250 appli 225→226 ». */
+    String verDiff(JSONObject p) {
+        StringBuilder b = new StringBuilder();
+        int lpv = Api.pageVersion(api.pageBytes()), rpv = p.optInt("pv", 0), lwv = Math.max(0, api.wrLocalVersion()), rwv = p.optInt("wv", 0); long lav = appCode(), rav = p.optLong("av", 0);
+        if (rpv > 0 && rpv != lpv) b.append("page ici v").append(lpv).append(" / là-bas v").append(rpv).append(' ');
+        if (p.has("wv") && rwv != lwv) b.append("WillRelais ici v").append(lwv).append(" / là-bas v").append(rwv).append(' ');
+        if (rav > 0 && rav != lav) b.append("appli ici ").append(lav).append(" / là-bas ").append(rav).append(' ');
+        return b.toString().trim();
+    }
+    final java.util.concurrent.atomic.AtomicBoolean updBusy = new java.util.concurrent.atomic.AtomicBoolean(false);
+    volatile long verT = 0; volatile String verK = "";
+    /** Lance la mise à jour en tâche de fond (au plus une à la fois ; même écart retenté au bout de 2 min). */
+    void verSync(String hp, JSONObject p, String vd) {
+        if (busy.get() || p.optBoolean("busy")) return;
+        if (vd.equals(verK) && System.currentTimeMillis() - verT < 120000) return;
+        if (!updBusy.compareAndSet(false, true)) return;
+        verT = System.currentTimeMillis(); verK = vd;
+        new Thread(() -> {
+            try { TLog.w("VERSION", p.optString("name") + " : " + vd + " → mise à jour"); JSONObject pr = new JSONObject(); updates(hp, p, pr); TLog.w("VERSION", "résultat " + pr); if (onUpd != null && (pr.has("pageNew") || pr.has("wrNew") || pr.has("apkNew"))) try { onUpd.accept(pr.toString()); } catch (Exception ignored) { } }
+            finally { updBusy.set(false); }
+        }, "ver-sync").start();
+    }
+    /** Appelé quand une mise à jour vient d'arriver par la comparaison des versions (l'appli propose l'installation). */
+    volatile java.util.function.Consumer<String> onUpd;
+    /** Côté serveur : l'autre appareil annonce ses versions à chaque connexion ; l'écart est noté au journal. */
+    String srvK = "";
+    void verLog(String who, Map<String, String> qp) {
+        try {
+            if (qp.get("pv") == null) return;
+            JSONObject p = new JSONObject(); p.put("pv", Integer.parseInt(qp.get("pv"))); p.put("av", Long.parseLong(qp.get("av"))); p.put("wv", Integer.parseInt(qp.getOrDefault("wv", "0")));
+            String vd = verDiff(p), k = who.replaceAll(".* ", "") + vd;
+            if (!k.equals(srvK)) { srvK = k; TLog.w("VERSION", who + " : " + (vd.isEmpty() ? "identiques" : vd)); }
+        } catch (Exception ignored) { }
+    }
+
     /** Mise à jour de la page et de l'appli entre les deux appareils : la plus récente passe sur l'autre. */
     void updates(String hp, JSONObject ping, JSONObject pr) {
         try {
             int rpv = ping.optInt("pv", 0), lpv = Api.pageVersion(api.pageBytes());
             if (rpv > lpv) {
                 Res r = http(hp, "GET", "/page", null);
-                if (r.code == 200 && Api.signed(r.body) && Api.pageVersion(r.body) > lpv) { api.importPage(new java.io.ByteArrayInputStream(r.body), "interventions.html"); pr.put("pageNew", Api.pageVersion(r.body)); }
+                if (r.code == 200 && Api.signed(r.body) && Api.pageVersion(r.body) > lpv) { api.importPage(new java.io.ByteArrayInputStream(r.body), "interventions.html"); pr.put("pageNew", Api.pageVersion(r.body)); TLog.w("MAJ", "page v" + Api.pageVersion(r.body) + " reçue"); }
             } else if (lpv > rpv && rpv > 0) {
                 File tmp = File.createTempFile("bipage", ".html", ctx.getCacheDir());
                 try (OutputStream o = new FileOutputStream(tmp)) { o.write(api.pageBytes()); }
                 Res w = http(hp, "POST", "/pagein", tmp); tmp.delete();
-                if (w.code == 200 && new String(w.body, StandardCharsets.UTF_8).contains("true")) pr.put("pageSent", lpv);
+                if (w.code == 200 && new String(w.body, StandardCharsets.UTF_8).contains("true")) { pr.put("pageSent", lpv); TLog.w("MAJ", "page v" + lpv + " envoyée"); }
             }
             if (ping.has("wv")) {                           // page WillRelais : la plus récente passe aussi sur l'autre appareil
                 int rwv = ping.optInt("wv", 0), lwv = Math.max(0, api.wrLocalVersion());
                 if (rwv > lwv) {
                     Res r = http(hp, "GET", "/wr", null);
-                    if (r.code == 200 && Api.signed(r.body) && Api.wrVersion(r.body) > lwv) { api.importWr(r.body); pr.put("wrNew", Api.wrVersion(r.body)); }
+                    if (r.code == 200 && Api.signed(r.body) && Api.wrVersion(r.body) > lwv) { api.importWr(r.body); pr.put("wrNew", Api.wrVersion(r.body)); TLog.w("MAJ", "WillRelais v" + Api.wrVersion(r.body) + " reçu"); }
                 } else if (lwv > rwv) {
                     File tmp = File.createTempFile("biwr", ".html", ctx.getCacheDir());
                     try (OutputStream o = new FileOutputStream(tmp)) { o.write(api.wrBytes()); }
                     Res w = http(hp, "POST", "/wrin", tmp); tmp.delete();
-                    if (w.code == 200 && new String(w.body, StandardCharsets.UTF_8).contains("true")) pr.put("wrSent", lwv);
+                    if (w.code == 200 && new String(w.body, StandardCharsets.UTF_8).contains("true")) { pr.put("wrSent", lwv); TLog.w("MAJ", "WillRelais v" + lwv + " envoyé"); }
                 }
             }
             long rav = ping.optLong("av", 0), lav = appCode();
@@ -577,11 +634,11 @@ class Sync {
                     OutputStream out = s.getOutputStream(); out.write(("GET /apk HTTP/1.0\r\nX-Pair: " + token + "\r\nContent-Length: 0\r\n\r\n").getBytes(StandardCharsets.UTF_8)); out.flush();
                     InputStream in = s.getInputStream(); String st = readLine(in); long n = -1; String l;
                     while ((l = readLine(in)) != null && !l.isEmpty()) if (l.toLowerCase().startsWith("content-length:")) n = Long.parseLong(l.substring(15).trim());
-                    if (st != null && st.contains(" 200 ") && n > 0) { try (OutputStream fo = new FileOutputStream(f)) { copy(in, fo, n); } if (f.length() == n) { pr.put("apkNew", f.getAbsolutePath()); sp.edit().putLong("apkGot", rav).putLong("apkLen", n).apply(); } }
+                    if (st != null && st.contains(" 200 ") && n > 0) { try (OutputStream fo = new FileOutputStream(f)) { copy(in, fo, n); } if (f.length() == n) { pr.put("apkNew", f.getAbsolutePath()); TLog.w("MAJ", "appli " + rav + " reçue (" + n + " o)"); sp.edit().putLong("apkGot", rav).putLong("apkLen", n).apply(); } }
                 }
             } else if (lav > rav && rav > 0 && (forceApk || System.currentTimeMillis() - sp.getLong("apkSentT_" + ping.optString("dev") + "_" + rav + "_" + lav, 0) > 15 * 60000L)) {   // renvoyée au plus toutes les 15 min tant que l'autre appareil n'est pas à jour
                 Res w = http(hp, "POST", "/apkin", new File(ctx.getApplicationInfo().sourceDir));
-                if (w.code == 200) { pr.put("apkSent", lav); sp.edit().putLong("apkSentT_" + ping.optString("dev") + "_" + rav + "_" + lav, System.currentTimeMillis()).apply(); }
+                if (w.code == 200) { pr.put("apkSent", lav); TLog.w("MAJ", "appli " + lav + " envoyée (l'autre : " + rav + ")"); sp.edit().putLong("apkSentT_" + ping.optString("dev") + "_" + rav + "_" + lav, System.currentTimeMillis()).apply(); }
             }
         } catch (Exception e) { try { pr.put("updErr", String.valueOf(e.getMessage())); } catch (Exception ignored) { } }
     }
@@ -681,33 +738,38 @@ class Sync {
         JSONObject rep = new JSONObject();
         JSONArray peers = new JSONArray();
         if (token.isEmpty()) return "{\"error\":\"code de jumelage absent\"}";
-        if (!busy.compareAndSet(false, true)) return "{\"error\":\"synchro déjà en cours\"}";
+        if (!busy.compareAndSet(false, true)) { TLog.w("SYNC", "refusée : synchro déjà en cours"); return "{\"error\":\"synchro déjà en cours\"}"; }
         if (manual != null && !manual.trim().isEmpty()) sp.edit().putString("manual", manual.trim()).apply();
+        long t0 = System.currentTimeMillis(); TLog.w("SYNC", "début (" + Thread.currentThread().getName() + ") candidats : " + candidates(manual));
         try {
             Set<String> seen = new HashSet<>();
             for (String hp : candidates(manual)) {
                 JSONObject pr = new JSONObject(); pr.put("host", hp);
                 try {
-                    Res r = http(hp, "GET", "/ping?wd=" + URLEncoder.encode(new JSONArray(api.wrDirs()).toString(), "UTF-8"), null);
-                    if (r.code == 403) { pr.put("error", "code de jumelage différent"); peers.put(pr); continue; }
-                    if (r.code != 200) continue;
+                    Res r = http(hp, "GET", "/ping?" + verQuery() + "&wd=" + URLEncoder.encode(new JSONArray(api.wrDirs()).toString(), "UTF-8"), null);
+                    if (r.code == 403) { pr.put("error", "code de jumelage différent"); peers.put(pr); TLog.w("SYNC", hp + " : code de jumelage différent"); continue; }
+                    if (r.code != 200) { TLog.w("SYNC", hp + " : réponse " + r.code); continue; }
                     JSONObject o = new JSONObject(new String(r.body, StandardCharsets.UTF_8));
                     String pd = o.optString("dev");
                     if (pd.isEmpty() || pd.equals(dev) || seen.contains(pd)) continue;
                     seen.add(pd);
                     pr.put("dev", pd); pr.put("name", o.optString("name"));
                     liveHosts.add(hp); remember(hp);
-                    if (o.optBoolean("busy")) { pr.put("error", "l'autre appareil synchronise déjà"); peers.put(pr); continue; }
+                    TLog.w("SYNC", hp + " = " + o.optString("name") + " (" + pd + ") appli " + o.optLong("av") + " page v" + o.optInt("pv") + " WillRelais v" + o.optInt("wv"));
+                    if (o.optBoolean("busy")) { pr.put("error", "l'autre appareil synchronise déjà"); peers.put(pr); TLog.w("SYNC", hp + " occupé (synchronise déjà)"); continue; }
                     try { JSONArray a = o.optJSONArray("wd"); if (a != null) { java.util.List<String> l = new java.util.ArrayList<>(); for (int i = 0; i < a.length(); i++) l.add(a.optString(i)); api.wrAddDirs(l); } } catch (Exception ignored) { }   // mêmes dossiers WillRelais des deux côtés
-                    syncWith(hp, pd, pr);
-                    updates(hp, o, pr);
-                } catch (Exception e) { if (pr.has("dev")) pr.put("error", String.valueOf(e.getMessage())); else continue; }
-                peers.put(pr);
+                    String vd = verDiff(o); TLog.w("VERSION", o.optString("name") + " : " + (vd.isEmpty() ? "identiques" : vd));
+                    Exception se = null; try { syncWith(hp, pd, pr); } catch (Exception e) { se = e; }
+                    if (!vd.isEmpty()) { updBusy.set(true); try { updates(hp, o, pr); } finally { updBusy.set(false); } verT = System.currentTimeMillis(); verK = vd; }   // à chaque synchro : la plus récente des pages / appli passe sur l'autre
+                    if (se != null) throw se;
+                } catch (Exception e) { if (pr.has("dev")) { pr.put("error", String.valueOf(e.getMessage())); TLog.w("ERR", hp + " : " + e); } else { TLog.w("SYNC", hp + " injoignable : " + e.getClass().getSimpleName() + " " + e.getMessage()); continue; } }
+                peers.put(pr); TLog.w("SYNC", "bilan " + pr.toString());
             }
             rep.put("peers", peers);
             rep.put("ok", true);
-        } catch (Exception e) { try { rep.put("error", String.valueOf(e.getMessage())); } catch (Exception ignored) { } }
+        } catch (Exception e) { try { rep.put("error", String.valueOf(e.getMessage())); } catch (Exception ignored) { } TLog.w("ERR", "synchro : " + e); }
         finally { busy.set(false); }
+        TLog.w("SYNC", "fin en " + (System.currentTimeMillis() - t0) + " ms, " + peers.length() + " appareil(s)" + (peers.length() == 0 ? " - aucun autre appareil joignable" : ""));
         return rep.toString();
     }
 
@@ -720,6 +782,7 @@ class Sync {
         int nR = 0, nL = 0;
         for (java.util.Iterator<String> it = R.keys(); it.hasNext(); ) if (!it.next().endsWith("/")) nR++;
         for (java.util.Iterator<String> it = L.keys(); it.hasNext(); ) if (!it.next().endsWith("/")) nL++;
+        TLog.w("LIST", "ici " + nL + " fichier(s), là-bas " + nR + ", état commun " + M.length());
         if (M.length() > 0 && nR == 0) throw new Exception("dossier de l'autre appareil vide ou inaccessible : rien n'est supprimé");
         if (M.length() > 0 && nL == 0) throw new Exception("dossier de cet appareil vide ou inaccessible : rien n'est supprimé");
         int gone = 0;
@@ -749,18 +812,18 @@ class Sync {
                     if (!lch && !rch) { NM.put(p, m); continue; }
                     if (l.getLong(1) == r.getLong(1) && Math.abs(lm - rm) <= 2000) { NM.put(p, new JSONArray().put(lm).put(rm).put(l.getLong(1))); continue; }
                     boolean push = lch && (!rch || lm >= rm);
-                    if (push) { Res w = http(hp, "POST", "/put?p=" + URLEncoder.encode(p, "UTF-8") + "&m=" + lm, f); if (w.code != 200) { err++; continue; } long nm = new JSONObject(new String(w.body, StandardCharsets.UTF_8)).optLong("m", lm); NM.put(p, new JSONArray().put(lm).put(nm).put(l.getLong(1))); up++; bytes += l.getLong(1); }
-                    else { Res d = download(hp, p, f); if (d.code != 200) { err++; continue; } NM.put(p, new JSONArray().put(f.lastModified()).put(rm).put(f.length())); down++; bytes += f.length(); }
+                    if (push) { Res w = http(hp, "POST", "/put?p=" + URLEncoder.encode(p, "UTF-8") + "&m=" + lm, f); TLog.w(w.code == 200 ? "ENVOI" : "ERR", p + " " + l.getLong(1) + " o" + (lch && rch ? " (modifié des deux côtés, ici plus récent)" : "") + (w.code == 200 ? "" : " -> " + w.code)); if (w.code != 200) { err++; continue; } long nm = new JSONObject(new String(w.body, StandardCharsets.UTF_8)).optLong("m", lm); NM.put(p, new JSONArray().put(lm).put(nm).put(l.getLong(1))); up++; bytes += l.getLong(1); }
+                    else { Res d = download(hp, p, f); TLog.w(d.code == 200 ? "RECU" : "ERR", p + " " + r.getLong(1) + " o" + (lch && rch ? " (modifié des deux côtés, là-bas plus récent : version d'ici remplacée)" : "") + (d.code == 200 ? "" : " -> " + d.code)); if (d.code != 200) { err++; continue; } NM.put(p, new JSONArray().put(f.lastModified()).put(rm).put(f.length())); down++; bytes += f.length(); }
                 } else if (l != null) {                                 // seulement ici
-                    if (m != null && !lch) { if (allowDel && f.delete()) del++; continue; }          // supprimé sur l'autre appareil
-                    Res w = http(hp, "POST", "/put?p=" + URLEncoder.encode(p, "UTF-8") + "&m=" + lm, f); if (w.code != 200) { err++; continue; }
+                    if (m != null && !lch) { if (allowDel && f.delete()) { del++; TLog.w("SUPPR", p + " (supprimé sur l'autre appareil)"); } else if (!allowDel) TLog.w("GARDE", p + " (suppression retenue : trop d'un coup)"); continue; }          // supprimé sur l'autre appareil
+                    Res w = http(hp, "POST", "/put?p=" + URLEncoder.encode(p, "UTF-8") + "&m=" + lm, f); TLog.w(w.code == 200 ? "ENVOI" : "ERR", p + " " + l.getLong(1) + " o (nouveau)" + (w.code == 200 ? "" : " -> " + w.code)); if (w.code != 200) { err++; continue; }
                     long nm = new JSONObject(new String(w.body, StandardCharsets.UTF_8)).optLong("m", lm); NM.put(p, new JSONArray().put(lm).put(nm).put(l.getLong(1))); up++; bytes += l.getLong(1);
                 } else {                                                 // seulement là-bas
-                    if (m != null && !rch) { if (allowDel) { Res d = http(hp, "POST", "/del?p=" + URLEncoder.encode(p, "UTF-8"), null); if (d.code == 200) del++; } continue; }   // supprimé ici
-                    Res d = download(hp, p, f); if (d.code != 200) { err++; continue; }
+                    if (m != null && !rch) { if (allowDel) { Res d = http(hp, "POST", "/del?p=" + URLEncoder.encode(p, "UTF-8"), null); if (d.code == 200) del++; TLog.w("SUPPR", p + " (supprimé ici, effacé là-bas)" + (d.code == 200 ? "" : " -> " + d.code)); } else TLog.w("GARDE", p + " (suppression retenue)"); continue; }   // supprimé ici
+                    Res d = download(hp, p, f); TLog.w(d.code == 200 ? "RECU" : "ERR", p + " " + r.getLong(1) + " o (nouveau)" + (d.code == 200 ? "" : " -> " + d.code)); if (d.code != 200) { err++; continue; }
                     NM.put(p, new JSONArray().put(f.lastModified()).put(rm).put(f.length())); down++; bytes += f.length();
                 }
-            } catch (Exception e) { err++; }
+            } catch (Exception e) { err++; TLog.w("ERR", p + " : " + e); }
         }
         sp.edit().putString("m_" + pd, NM.toString()).putLong("t_" + pd, System.currentTimeMillis()).apply();
         try {                                                     // même état commun envoyé à l'autre appareil (local et distant inversés)

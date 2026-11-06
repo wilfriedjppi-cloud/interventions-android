@@ -61,6 +61,7 @@ public class MainActivity extends Activity {
             syncer.onRemote = () -> runOnUiThread(() -> { if (web != null) web.evaluateJavascript("window.biNetRemote&&window.biNetRemote()", null); });
             syncer.onPage = v -> runOnUiThread(() -> new android.os.Handler(getMainLooper()).postDelayed(() -> reloadPage("Page mise à jour depuis l'autre appareil : v" + v), 4000));
             syncer.onApk = f -> runOnUiThread(() -> askApk(f));
+            syncer.onUpd = j -> runOnUiThread(() -> { try { JSONObject p = new JSONObject(j); if (!p.optString("apkNew").isEmpty()) askApk(new File(p.optString("apkNew"))); else if (p.optInt("pageNew", 0) > 0) { final int v = p.optInt("pageNew"); new android.os.Handler(getMainLooper()).postDelayed(() -> reloadPage("Page mise à jour depuis l'autre appareil : v" + v), 3000); } } catch (Exception ignored) { } });   // écart de versions repéré par le voyant
             syncer.onLive = j -> runOnUiThread(() -> { if (web != null) web.evaluateJavascript("window.biLive&&window.biLive(" + JSONObject.quote(j) + ")", null); });
         }
         return syncer;
@@ -695,6 +696,44 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> { if (web != null) web.evaluateJavascript(js, null); });
             }, "sync-state").start();
         }
+
+        /** Journal des transferts : ligne écrite par la page (synchro des données, fusions…). */
+        @JavascriptInterface
+        public void tlog(String cat, String msg) { TLog.init(MainActivity.this); TLog.w(cat == null || cat.isEmpty() ? "PAGE" : cat, msg); }
+
+        /** Partage du journal (cet appareil + l'autre s'il est joignable) en fichier texte, pour le débogage. */
+        @JavascriptInterface
+        public void logShare(final boolean withPeer) {
+            new Thread(() -> {
+                try {
+                    TLog.init(MainActivity.this);
+                    android.content.SharedPreferences bs = getSharedPreferences("bisync", MODE_PRIVATE);
+                    StringBuilder sb = new StringBuilder();
+                    String dn = bs.getString("name", ""); if (dn.isEmpty()) dn = Build.MODEL;
+                    sb.append("Journal des transferts — Interventions\n").append("Appareil : ").append(dn).append(" (").append(Build.MANUFACTURER).append(' ').append(Build.MODEL).append(", Android ").append(Build.VERSION.RELEASE).append(")\n")
+                      .append("Appli : ").append(api.versionName()).append(" · page v").append(Api.pageVersion(api.pageBytes())).append(" · WillRelais v").append(api.wrLocalVersion()).append('\n')
+                      .append("Généré le : ").append(new java.text.SimpleDateFormat("dd/MM/yyyy HH:mm:ss", java.util.Locale.FRANCE).format(new java.util.Date())).append('\n');
+                    Sync sy = syncer;
+                    if (sy != null) sb.append("Synchro : ").append(sy.token.isEmpty() ? "désactivée" : "active").append(" · réseau ").append(sy.info()).append('\n');
+                    sb.append("Appareils retenus : ").append(bs.getString("known", "[]")).append(" · adresse saisie : ").append(bs.getString("manual", "")).append('\n');
+                    sb.append("Dernière synchro de fond : ").append(bs.getLong("majT", 0) > 0 ? new java.util.Date(bs.getLong("majT", 0)).toString() : "jamais").append(" ").append(bs.getString("majR", "")).append('\n');
+                    android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+                    sb.append("Synchro en veille autorisée (batterie) : ").append(pm != null && pm.isIgnoringBatteryOptimizations(getPackageName()) ? "oui" : "non").append("\n\n");
+                    sb.append("===== Journal de cet appareil =====\n").append(TLog.tail(3000000));
+                    if (withPeer && sy != null && !sy.token.isEmpty()) { String pl = sy.peerLog(); sb.append("\n\n===== Journal de l'autre appareil =====\n").append(pl.isEmpty() ? "(injoignable)\n" : pl); }
+                    File d = new File(getCacheDir(), "share"); d.mkdirs();
+                    String fn = "Journal-transferts-" + dn.replaceAll("[^A-Za-z0-9_-]", "_") + "-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.FRANCE).format(new java.util.Date()) + ".txt";
+                    File f = new File(d, fn);
+                    try (OutputStream o = new FileOutputStream(f)) { o.write(sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)); }
+                    Uri u = FileProvider.getUriForFile(MainActivity.this, getPackageName() + ".files", f);
+                    Intent sh = new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_STREAM, u).putExtra(Intent.EXTRA_SUBJECT, "Journal des transferts — " + dn).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    runOnUiThread(() -> startActivity(Intent.createChooser(sh, "Envoyer le journal")));
+                } catch (Exception e) { runOnUiThread(() -> Toast.makeText(MainActivity.this, "Journal : " + e.getMessage(), Toast.LENGTH_LONG).show()); }
+            }, "log-share").start();
+        }
+
+        @JavascriptInterface
+        public void logClear() { TLog.init(MainActivity.this); TLog.clear(); TLog.w("JOURNAL", "effacé"); }
 
         /** État de la synchro en veille : dernière synchro de fond, son compte rendu, appli épargnée par l'économie de batterie. */
         @JavascriptInterface

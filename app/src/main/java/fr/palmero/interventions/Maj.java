@@ -58,6 +58,7 @@ public class Maj extends BroadcastReceiver {
                 s.start(code, bs.getString("dev", ""), bs.getString("name", ""));   // serveur ouvert : l'autre appareil peut aussi joindre celui-ci
             }
         }
+        TLog.init(c); TLog.w("FOND", "synchro de fond (veille)");
         try { Thread.sleep(2500); } catch (Exception ignored) { }  // découverte Wi-Fi des appareils
         String res = s.syncAll(null);
         bs.edit().putLong("majT", System.currentTimeMillis()).putString("majR", res).apply();
