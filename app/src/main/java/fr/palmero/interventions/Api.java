@@ -38,7 +38,7 @@ import java.util.Locale;
 
 /** Le même service que le serveur QPython (/api/…), mais dans l'appli : fichiers dans Documents/Gestion interventions. */
 class Api {
-    static final String VERSION = "appli-3.17";
+    static final String VERSION = "appli-3.18";
     static final String[] SUBS = {"", "Gestion interventions", "Gestion interventions/config/global", "Gestion interventions/config/utilisateur",
             "Gestion interventions/données/OI", "Gestion interventions/données/rapports", "Gestion interventions/données/backup",
             "Gestion interventions/données/gestion", "Gestion interventions/appli"};
@@ -480,7 +480,7 @@ class Api {
     java.util.List<String> wrDirs() {
         java.util.List<String> l = new java.util.ArrayList<>();
         try { JSONArray a = new JSONArray(wsp().getString("dirs", "[]")); for (int i = 0; i < a.length(); i++) { String x = a.optString(i); if (extFile(x) != null && !x.isEmpty() && !l.contains(x)) l.add(x); } } catch (Exception ignored) { }
-        String d = wrDefaultDir(); if (!l.contains(d)) l.add(0, d);
+        String d = wrDefaultDir(); if (!d.isEmpty() && !l.contains(d)) l.add(0, d);
         return l;
     }
     synchronized void wrAddDirs(java.util.Collection<String> add) {

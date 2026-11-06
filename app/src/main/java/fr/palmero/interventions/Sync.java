@@ -302,7 +302,8 @@ class Sync {
         for (String x : parts) if (x.isEmpty() || x.equals(".") || x.equals("..") || x.startsWith(".")) return null;
         if (parts[0].equals("appli")) return null;
         if (parts[0].equals("~ext")) {                                   // dossiers WillRelais hors de « Gestion interventions » : même chemin sur les deux appareils
-            String r = rel.substring(5);
+            String r = rel.length() > 5 ? rel.substring(5) : "";
+            if (r.isEmpty()) return null;                                // « ~ext » seul (dossier vide) : rien à recopier
             File f = Api.extFile(r);
             return f != null && api.inWrDirs(r) ? f : null;
         }
@@ -801,7 +802,7 @@ class Sync {
         int dirs = 0;
         for (String p : all) {
             if (!p.endsWith("/")) continue;
-            File dd = fileOf(p); if (dd == null) continue;
+            File dd; try { dd = fileOf(p); } catch (Exception e) { TLog.w("ERR", "dossier " + p + " : " + e); continue; } if (dd == null) continue;   // un chemin invalide ne bloque plus toute la synchro
             if (R.has(p) && !L.has(p)) { if (dd.mkdirs()) dirs++; }
             else if (L.has(p) && !R.has(p)) { try { if (http(hp, "POST", "/mkdir?p=" + URLEncoder.encode(p, "UTF-8"), null).code == 200) dirs++; } catch (Exception ignored) { } }
         }
@@ -811,7 +812,7 @@ class Sync {
             long lm = l == null ? 0 : l.getLong(0), rm = r == null ? 0 : r.getLong(0);
             boolean lch = l != null && (m == null || Math.abs(lm - m.getLong(0)) > 2000 || l.getLong(1) != m.optLong(2, -1));
             boolean rch = r != null && (m == null || Math.abs(rm - m.getLong(1)) > 2000 || r.getLong(1) != m.optLong(2, -1));
-            File f = fileOf(p);
+            File f; try { f = fileOf(p); } catch (Exception e) { err++; TLog.w("ERR", p + " : " + e); continue; }
             if (f == null) continue;
             try {
                 if (l != null && r != null) {
