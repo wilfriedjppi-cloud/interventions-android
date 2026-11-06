@@ -193,6 +193,10 @@ class Sync {
                 try { reply(out, 200, "{\"ok\":true}"); } catch (Exception ignored) { }
                 return;
             }
+            if (path.equals("/sum")) {                                   // somme de contrôle des fichiers synchronisés + saisie en attente
+                JSONObject o = new JSONObject(); o.put("dev", dev); o.put("name", name); o.put("sum", treeSum()); o.put("dirty", myDirty); o.put("busy", busy.get());
+                reply(out, 200, o.toString()); return;
+            }
             if (path.equals("/xls")) { reply(out, 200, xls(qp.get("p")).toString()); return; }          // parcourir les dossiers de cet appareil depuis l'autre
             if (path.equals("/xfind")) { reply(out, 200, xfind(qp.get("q"), qp.get("p")).toString()); return; }   // chercher un fichier par son nom
             if (path.equals("/xget")) {                                  // recopier un fichier de cet appareil vers l'autre
@@ -391,6 +395,63 @@ class Sync {
         try { JSONArray k = new JSONArray(sp.getString("known", "[]")), n = new JSONArray(); n.put(hp); for (int i = 0; i < k.length() && n.length() < 6; i++) if (!k.optString(i).equals(hp)) n.put(k.optString(i)); sp.edit().putString("known", n.toString()).apply(); } catch (Exception ignored) { }
     }
     String tried = "";
+
+    /* ---------- somme de contrôle : CRC32 du contenu de chaque fichier synchronisé (mémorisé tant que date et taille ne changent pas),
+       puis SHA-1 de la liste triée « chemin:crc:taille ». Égale sur les deux appareils = mêmes fichiers. ---------- */
+    static final Map<String, long[]> CRC = new HashMap<>();
+    volatile boolean myDirty = false;
+    String treeSum() {
+        try {
+            JSONObject l = listJson(); java.util.List<String> ks = new java.util.ArrayList<>();
+            java.util.Iterator<String> it = l.keys(); while (it.hasNext()) { String k = it.next(); if (!k.endsWith("/")) ks.add(k); }
+            java.util.Collections.sort(ks);
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-1");
+            byte[] buf = new byte[65536];
+            for (String k : ks) {
+                JSONArray a = l.optJSONArray(k); if (a == null) continue; long mt = a.optLong(0), sz = a.optLong(1); long[] c;
+                synchronized (CRC) { c = CRC.get(k); }
+                if (c == null || c[0] != mt || c[1] != sz) {
+                    File f = fileOf(k); if (f == null || !f.isFile()) continue;
+                    java.util.zip.CRC32 cr = new java.util.zip.CRC32();
+                    try (InputStream in = new FileInputStream(f)) { int n; while ((n = in.read(buf)) > 0) cr.update(buf, 0, n); }
+                    c = new long[]{mt, sz, cr.getValue()}; synchronized (CRC) { CRC.put(k, c); }
+                }
+                md.update((k + ":" + Long.toHexString(c[2]) + ":" + sz + "\n").getBytes(StandardCharsets.UTF_8));
+            }
+            StringBuilder h = new StringBuilder(); for (byte b : md.digest()) h.append(String.format("%02x", b));
+            return h.substring(0, 16);
+        } catch (Exception e) { return ""; }
+    }
+
+    /** État pour le voyant : autre appareil joignable ? sommes de contrôle des deux côtés, saisie en attente là-bas. */
+    String state(boolean dirty) {
+        myDirty = dirty;
+        JSONObject o = new JSONObject();
+        try {
+            o.put("mine", treeSum());
+            if (token.isEmpty()) { o.put("conn", false); o.put("why", "synchro désactivée"); return o.toString(); }
+            java.util.List<String> hs = new java.util.ArrayList<>(liveHosts);
+            for (String c : candidates(null)) if (!hs.contains(c)) hs.add(c);
+            int ct = connTo; connTo = 1200;
+            try {
+                for (String hp : hs) {
+                    try {
+                        Res r = http(hp, "GET", "/sum", null);
+                        if (r.code == 200) {
+                            JSONObject p = new JSONObject(new String(r.body, StandardCharsets.UTF_8));
+                            if (p.optString("dev").equals(dev)) continue;
+                            liveHosts.add(hp); remember(hp);
+                            o.put("conn", true); o.put("name", p.optString("name")); o.put("theirs", p.optString("sum")); o.put("pdirty", p.optBoolean("dirty")); o.put("pbusy", p.optBoolean("busy"));
+                            return o.toString();
+                        }
+                        if (r.code == 404) { o.put("conn", true); o.put("old", true); return o.toString(); }   // autre appareil en version plus ancienne
+                    } catch (Exception ignored) { }
+                }
+            } finally { connTo = ct; }
+            o.put("conn", false);
+        } catch (Exception ignored) { }
+        return o.toString();
+    }
 
     /** Code de jumelage sans démarrer le serveur (mises à jour en arrière-plan). */
     void prepare(String code, String devId, String devName) {

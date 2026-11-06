@@ -683,6 +683,19 @@ public class MainActivity extends Activity {
             }, "peer-upd").start();
         }
 
+        /** Voyant de synchro : état calculé à part (réseau, sommes de contrôle), renvoyé à window.biSyncState. */
+        volatile boolean stInFlight = false;
+        @JavascriptInterface
+        public void syncState(final boolean dirty) {
+            if (stInFlight) return; stInFlight = true;
+            new Thread(() -> {
+                String r = "{\"conn\":false,\"why\":\"synchro désactivée\"}";
+                try { Sync sy = syncer; if (sy != null) r = sy.state(dirty); } catch (Exception ignored) { } finally { stInFlight = false; }
+                final String js = "window.biSyncState&&window.biSyncState(" + JSONObject.quote(r) + ")";
+                runOnUiThread(() -> { if (web != null) web.evaluateJavascript(js, null); });
+            }, "sync-state").start();
+        }
+
         /** État de la synchro en veille : dernière synchro de fond, son compte rendu, appli épargnée par l'économie de batterie. */
         @JavascriptInterface
         public String majInfo() {
