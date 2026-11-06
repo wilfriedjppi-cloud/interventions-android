@@ -266,6 +266,7 @@ class Sync {
                 if (f.exists()) f.delete();
                 if (!tmp.renameTo(f)) { tmp.delete(); reply(out, 500, "{\"error\":\"écriture\"}"); return; }
                 try { f.setLastModified(Long.parseLong(qp.getOrDefault("m", "0"))); } catch (Exception ignored) { }
+                synchronized (CRC) { CRC.remove(rel); }                   // contenu neuf : somme de contrôle à recalculer (même date et même taille possibles)
                 JSONObject o = new JSONObject(); o.put("ok", true); o.put("m", f.lastModified());
                 reply(out, 200, o.toString()); return;
             }
@@ -465,7 +466,7 @@ class Sync {
                                     JSONObject t = new JSONObject(new String(d.body, StandardCharsets.UTF_8)), m = listJson(); JSONArray df = new JSONArray(); int nd = 0;
                                     java.util.Set<String> all = new java.util.TreeSet<>(); java.util.Iterator<String> i1 = t.keys(); while (i1.hasNext()) all.add(i1.next());
                                     java.util.Iterator<String> i2 = m.keys(); while (i2.hasNext()) { String k = i2.next(); if (!k.endsWith("/")) all.add(k); }
-                                    for (String k : all) { long[] c; synchronized (CRC) { c = CRC.get(k); } String mc = (c != null && m.has(k)) ? Long.toHexString(c[2]) : ""; if (!mc.equals(t.optString(k))) { nd++; if (df.length() < 5) df.put(k.substring(k.lastIndexOf('/') + 1)); } }
+                                    for (String k : all) { long[] c; synchronized (CRC) { c = CRC.get(k); } String mc = (c != null && m.has(k)) ? Long.toHexString(c[2]) : ""; if (!mc.equals(t.optString(k))) { nd++; if (df.length() < 5) df.put(k.startsWith("~ext/") ? k.substring(5) : k); } }
                                     o.put("ndiff", nd); o.put("diff", df);
                                 }
                             } catch (Exception ignored) { }
@@ -723,6 +724,7 @@ class Sync {
             if (to.exists()) to.delete();
             if (!tmp.renameTo(to)) { tmp.delete(); r.code = 500; return r; }
             if (r.mt > 0) to.setLastModified(r.mt);
+            synchronized (CRC) { CRC.remove(rel); }
             return r;
         }
     }
@@ -798,7 +800,9 @@ class Sync {
         Set<String> all = new java.util.TreeSet<>();
         for (java.util.Iterator<String> it = R.keys(); it.hasNext(); ) all.add(it.next());
         for (java.util.Iterator<String> it = L.keys(); it.hasNext(); ) all.add(it.next());
-        int up = 0, down = 0, del = 0, err = 0; long bytes = 0;
+        int up = 0, down = 0, del = 0, err = 0, skip = 0; long bytes = 0;
+        JSONObject RS = null;                                     // sommes de contrôle de l'autre appareil : contenu différent même à date et taille égales
+        try { Res sr = http(hp, "GET", "/sums", null); if (sr.code == 200) RS = new JSONObject(new String(sr.body, StandardCharsets.UTF_8)); treeSum(); } catch (Exception e) { TLog.w("SYNC", "sommes de contrôle de l'autre appareil indisponibles : " + e.getMessage()); }
         int dirs = 0;
         for (String p : all) {
             if (!p.endsWith("/")) continue;
@@ -813,11 +817,18 @@ class Sync {
             boolean lch = l != null && (m == null || Math.abs(lm - m.getLong(0)) > 2000 || l.getLong(1) != m.optLong(2, -1));
             boolean rch = r != null && (m == null || Math.abs(rm - m.getLong(1)) > 2000 || r.getLong(1) != m.optLong(2, -1));
             File f; try { f = fileOf(p); } catch (Exception e) { err++; TLog.w("ERR", p + " : " + e); continue; }
-            if (f == null) continue;
+            if (f == null) { skip++; TLog.w("GARDE", p + " ignoré : chemin refusé sur cet appareil (" + (l != null ? "ici" : "") + (r != null ? (l != null ? " et " : "") + "là-bas" : "") + ")"); continue; }
             try {
                 if (l != null && r != null) {
+                    String lc = "", rc = RS == null ? "" : RS.optString(p, "");
+                    long[] cc; synchronized (CRC) { cc = CRC.get(p); } if (cc != null && cc[0] == lm && cc[1] == l.getLong(1)) lc = Long.toHexString(cc[2]);
+                    if (!lc.isEmpty() && lc.equals(rc)) { NM.put(p, new JSONArray().put(lm).put(rm).put(l.getLong(1))); continue; }   // même contenu : rien à faire
+                    if (!lc.isEmpty() && !rc.isEmpty() && !lch && !rch) {   // contenu différent alors que la date et la taille ne l'indiquent pas : le plus récent gagne, sinon le même côté des deux appareils
+                        lch = lm > rm + 2000 || (Math.abs(lm - rm) <= 2000 && dev.compareTo(pd) > 0); rch = !lch;
+                        TLog.w("SYNC", p + " : contenu différent (somme ici " + lc + ", là-bas " + rc + ") → " + (lch ? "version d'ici envoyée" : "version de là-bas reprise"));
+                    }
                     if (!lch && !rch) { NM.put(p, m); continue; }
-                    if (l.getLong(1) == r.getLong(1) && Math.abs(lm - rm) <= 2000) { NM.put(p, new JSONArray().put(lm).put(rm).put(l.getLong(1))); continue; }
+                    if (l.getLong(1) == r.getLong(1) && Math.abs(lm - rm) <= 2000 && (lc.isEmpty() || rc.isEmpty())) { NM.put(p, new JSONArray().put(lm).put(rm).put(l.getLong(1))); continue; }
                     boolean push = lch && (!rch || lm >= rm);
                     if (push) { Res w = http(hp, "POST", "/put?p=" + URLEncoder.encode(p, "UTF-8") + "&m=" + lm, f); TLog.w(w.code == 200 ? "ENVOI" : "ERR", p + " " + l.getLong(1) + " o" + (lch && rch ? " (modifié des deux côtés, ici plus récent)" : "") + (w.code == 200 ? "" : " -> " + w.code)); if (w.code != 200) { err++; continue; } long nm = new JSONObject(new String(w.body, StandardCharsets.UTF_8)).optLong("m", lm); NM.put(p, new JSONArray().put(lm).put(nm).put(l.getLong(1))); up++; bytes += l.getLong(1); }
                     else { Res d = download(hp, p, f); TLog.w(d.code == 200 ? "RECU" : "ERR", p + " " + r.getLong(1) + " o" + (lch && rch ? " (modifié des deux côtés, là-bas plus récent : version d'ici remplacée)" : "") + (d.code == 200 ? "" : " -> " + d.code)); if (d.code != 200) { err++; continue; } NM.put(p, new JSONArray().put(f.lastModified()).put(rm).put(f.length())); down++; bytes += f.length(); }
@@ -840,7 +851,7 @@ class Sync {
             try (OutputStream o = new FileOutputStream(tmp)) { o.write(SW.toString().getBytes(StandardCharsets.UTF_8)); }
             http(hp, "POST", "/man?d=" + URLEncoder.encode(dev, "UTF-8"), tmp); tmp.delete();
         } catch (Exception ignored) { }
-        pr.put("held", !allowDel); pr.put("dirs", dirs); pr.put("up", up); pr.put("down", down); pr.put("del", del); pr.put("err", err); pr.put("bytes", bytes);
+        pr.put("held", !allowDel); pr.put("dirs", dirs); pr.put("up", up); pr.put("down", down); pr.put("del", del); pr.put("err", err); if (skip > 0) pr.put("skip", skip); pr.put("bytes", bytes);
     }
 
     String info() {
