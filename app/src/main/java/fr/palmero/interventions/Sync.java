@@ -197,7 +197,7 @@ class Sync {
             }
             if (!path.equals("/sum") && !path.equals("/sums") && !path.equals("/live")) TLog.w("SERV", path + (qp.get("p") != null ? " " + qp.get("p") : "") + (len > 0 ? " " + len + " o" : "") + " <- " + s.getInetAddress().getHostAddress());
             if (path.equals("/log")) { sendBytes(out, TLog.tail(1500000).getBytes(StandardCharsets.UTF_8)); return; }   // journal de cet appareil, joint à celui de l'autre pour le débogage
-            if (path.equals("/sums")) { treeSum(); JSONObject o = new JSONObject(), cur = listJson(); java.util.Iterator<String> ki = cur.keys(); while (ki.hasNext()) { String k = ki.next(); long[] cc; synchronized (CRC) { cc = CRC.get(k); } if (cc != null) o.put(k, Long.toHexString(cc[2])); } reply(out, 200, o.toString()); return; }   // détail par fichier (diagnostic du voyant)
+            if (path.equals("/sums")) { treeSum(); JSONObject o = new JSONObject(), cur = listJson(); java.util.Iterator<String> ki = cur.keys(); while (ki.hasNext()) { String k = ki.next(); long[] cc; synchronized (CRC) { cc = CRC.get(k); } if (cc != null && !BAD.containsKey(k)) o.put(k, Long.toHexString(cc[2])); else if (BAD.containsKey(k)) o.put(k, "!" + BAD.get(k)); } reply(out, 200, o.toString()); return; }   // détail par fichier (diagnostic du voyant)
             if (path.equals("/sum")) {                                   // somme de contrôle des fichiers synchronisés + saisie en attente
                 JSONObject o = new JSONObject(); o.put("dev", dev); o.put("name", name); o.put("sum", treeSum()); o.put("dirty", myDirty); o.put("busy", busy.get()); o.put("pv", Api.pageVersion(api.pageBytes())); o.put("av", appCode()); o.put("wv", Math.max(0, api.wrLocalVersion()));
                 verLog("demande de " + s.getInetAddress().getHostAddress(), qp);
@@ -422,17 +422,18 @@ class Sync {
             JSONObject l = listJson(); java.util.List<String> ks = new java.util.ArrayList<>();
             java.util.Iterator<String> it = l.keys(); while (it.hasNext()) { String k = it.next(); if (!k.endsWith("/") && !derived(k)) ks.add(k); }
             java.util.Collections.sort(ks);
+            BAD.keySet().retainAll(ks);
             java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-1");
             byte[] buf = new byte[65536];
             for (String k : ks) {
                 JSONArray a = l.optJSONArray(k); if (a == null) continue; long mt = a.optLong(0), sz = a.optLong(1); long[] c;
                 synchronized (CRC) { c = CRC.get(k); }
                 if (c == null || c[0] != mt || c[1] != sz) {
-                    File f = fileOf(k); if (f == null || !f.isFile()) { bad(k, f == null ? "chemin refusé" : "pas un fichier"); continue; }
+                    File f = fileOf(k); if (f == null || f.isDirectory()) { bad(k, f == null ? "chemin refusé" : "dossier"); continue; }   // isFile() peut répondre non pour un fichier pourtant listé (droits Android) : on essaie de le lire
                     java.util.zip.CRC32 cr = new java.util.zip.CRC32();
                     try (InputStream in = new FileInputStream(f)) { int n; while ((n = in.read(buf)) > 0) cr.update(buf, 0, n); }
-                    catch (Exception e) { bad(k, "illisible : " + e.getMessage()); continue; }   // un fichier illisible (droits) ne fausse plus toute la somme
-                    c = new long[]{mt, sz, cr.getValue()}; synchronized (CRC) { CRC.put(k, c); }
+                    catch (Exception e) { bad(k, (f.isFile() ? "" : "inaccessible (créé par une autre appli ou une installation précédente ?) ") + e.getMessage()); continue; }   // un fichier illisible (droits) ne fausse plus toute la somme
+                    c = new long[]{mt, sz, cr.getValue()}; synchronized (CRC) { CRC.put(k, c); } BAD.remove(k);
                 }
                 md.update((k + ":" + Long.toHexString(c[2]) + ":" + sz + "\n").getBytes(StandardCharsets.UTF_8));
             }
@@ -502,9 +503,11 @@ class Sync {
                                     JSONObject t = new JSONObject(new String(d.body, StandardCharsets.UTF_8)), m = listJson(); JSONArray df = new JSONArray(); int nd = 0; StringBuilder dd = new StringBuilder();
                                     java.util.Set<String> all = new java.util.TreeSet<>(); java.util.Iterator<String> i1 = t.keys(); while (i1.hasNext()) all.add(i1.next());
                                     java.util.Iterator<String> i2 = m.keys(); while (i2.hasNext()) { String k = i2.next(); if (!k.endsWith("/")) all.add(k); }
-                                    for (String k : all) { if (derived(k)) continue; long[] c; synchronized (CRC) { c = CRC.get(k); } String mc = (c != null && m.has(k)) ? Long.toHexString(c[2]) : ""; if (!mc.equals(t.optString(k))) { nd++; if (df.length() < 5) df.put(k.startsWith("~ext/") ? k.substring(5) : k);
+                                    JSONArray bd = new JSONArray();
+                                    for (String k : all) { if (derived(k)) continue; if (BAD.containsKey(k) || t.optString(k).startsWith("!")) { if (bd.length() < 10) bd.put((k.startsWith("~ext/") ? k.substring(5) : k) + (BAD.containsKey(k) ? " (illisible ici)" : " (illisible là-bas)")); continue; } long[] c; synchronized (CRC) { c = CRC.get(k); } String mc = (c != null && m.has(k)) ? Long.toHexString(c[2]) : ""; if (!mc.equals(t.optString(k))) { nd++; if (df.length() < 5) df.put(k.startsWith("~ext/") ? k.substring(5) : k);
                                         if (nd <= 8) { JSONArray le = m.optJSONArray(k); dd.append("\n    ").append(esc(k)).append(" | ici : ").append(le == null ? "absent de la liste" : "date " + le.optLong(0) + " taille " + le.optLong(1)).append(", somme ").append(c == null ? "aucune" : Long.toHexString(c[2]) + (le != null && (c[0] != le.optLong(0) || c[1] != le.optLong(1)) ? " (périmée)" : "")).append(BAD.containsKey(k) ? " [" + BAD.get(k) + "]" : "").append(" | là-bas : ").append(t.has(k) ? "somme " + t.optString(k) : "absent"); } } }
-                                    o.put("ndiff", nd); o.put("diff", df);
+                                    o.put("ndiff", nd); o.put("diff", df); if (bd.length() > 0) o.put("bad", bd);
+                                    if (nd == 0 && !p.optBoolean("dirty")) o.put("theirs", o.optString("mine"));   // seuls des fichiers illisibles diffèrent : rien à synchroniser
                                     String dk = nd + df.toString(); if (!dk.equals(diffKey)) { diffKey = dk; TLog.w("VOYANT", "détail des " + nd + " fichier(s) différent(s) :" + dd); }
                                 }
                             } catch (Exception ignored) { }
@@ -878,6 +881,11 @@ class Sync {
                 if (l != null && r != null) {
                     String lc = "", rc = RS == null ? "" : RS.optString(p, "");
                     long[] cc; synchronized (CRC) { cc = CRC.get(p); } if (cc != null && cc[0] == lm && cc[1] == l.getLong(1)) lc = Long.toHexString(cc[2]);
+                    if (BAD.containsKey(p) || rc.startsWith("!")) {          // fichier listé mais illisible d'un côté (droits Android) : rien à faire, et pas noté comme commun
+                        NM.remove(p);                                         // s'il est supprimé à la main de ce côté, la copie lisible de l'autre côté sera renvoyée (pas supprimée)
+                        missLog(p, esc(p) + " : illisible " + (BAD.containsKey(p) ? "ici (" + BAD.get(p) + ")" : "là-bas (" + rc.substring(1) + ")") + " → ni copié ni supprimé ; le supprimer avec le gestionnaire de fichiers sur cet appareil-là pour qu'il soit recopié depuis l'autre");
+                        continue;
+                    }
                     if ((lc.isEmpty() || rc.isEmpty()) && !own && !theirs) missLog(p, esc(p) + " : somme " + (lc.isEmpty() ? "indisponible ici" + (BAD.containsKey(p) ? " (" + BAD.get(p) + ")" : "") : "ici " + lc) + ", " + (rc.isEmpty() ? "indisponible là-bas" : "là-bas " + rc) + " ; date ici " + lm + " là-bas " + rm + ", taille " + l.getLong(1) + "/" + r.getLong(1) + (lch ? ", modifié ici" : "") + (rch ? ", modifié là-bas" : ""));
                     if (!lc.isEmpty() && lc.equals(rc)) { NM.put(p, new JSONArray().put(lm).put(rm).put(l.getLong(1))); continue; }   // même contenu : rien à faire
                     if (own || theirs) {
