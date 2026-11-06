@@ -431,6 +431,7 @@ class Sync {
 
     /** État pour le voyant : autre appareil joignable ? sommes de contrôle des deux côtés, saisie en attente là-bas. */
     String lastState = "";
+    volatile String act = "";   // action en cours (affichée par l'appui sur le voyant)
     String state(boolean dirty) {
         String r = state0(dirty);
         try { JSONObject o = new JSONObject(r); String k = o.optBoolean("conn") ? (o.optString("mine").equals(o.optString("theirs")) ? "identique" : "différent " + o.optString("mine") + "/" + o.optString("theirs") + (o.has("ndiff") ? " " + o.optInt("ndiff") + " fichier(s) " + o.optJSONArray("diff") : "")) + (o.optBoolean("pdirty") ? " saisie là-bas" : "") + (dirty ? " saisie ici" : "") : "non connecté";
@@ -441,7 +442,7 @@ class Sync {
         myDirty = dirty;
         JSONObject o = new JSONObject();
         try {
-            o.put("mine", treeSum());
+            o.put("mine", treeSum()); o.put("busy", busy.get()); o.put("upd", updBusy.get()); o.put("act", act);
             if (token.isEmpty()) { o.put("conn", false); o.put("why", "synchro désactivée"); return o.toString(); }
             java.util.List<String> hs = new java.util.ArrayList<>(liveHosts);
             for (String c : candidates(null)) if (!hs.contains(c)) hs.add(c);
@@ -581,8 +582,8 @@ class Sync {
         if (!updBusy.compareAndSet(false, true)) return;
         verT = System.currentTimeMillis(); verK = vd;
         new Thread(() -> {
-            try { TLog.w("VERSION", p.optString("name") + " : " + vd + " → mise à jour"); JSONObject pr = new JSONObject(); updates(hp, p, pr); TLog.w("VERSION", "résultat " + pr); if (onUpd != null && (pr.has("pageNew") || pr.has("wrNew") || pr.has("apkNew"))) try { onUpd.accept(pr.toString()); } catch (Exception ignored) { } }
-            finally { updBusy.set(false); }
+            try { act = "mise à jour des versions avec " + p.optString("name") + " (" + vd + ")"; TLog.w("VERSION", p.optString("name") + " : " + vd + " → mise à jour"); JSONObject pr = new JSONObject(); updates(hp, p, pr); TLog.w("VERSION", "résultat " + pr); if (onUpd != null && (pr.has("pageNew") || pr.has("wrNew") || pr.has("apkNew"))) try { onUpd.accept(pr.toString()); } catch (Exception ignored) { } }
+            finally { updBusy.set(false); act = ""; }
         }, "ver-sync").start();
     }
     /** Appelé quand une mise à jour vient d'arriver par la comparaison des versions (l'appli propose l'installation). */
@@ -603,6 +604,7 @@ class Sync {
         try {
             int rpv = ping.optInt("pv", 0), lpv = Api.pageVersion(api.pageBytes());
             if (rpv > lpv) {
+                act = "réception de la page v" + rpv + "…";
                 Res r = http(hp, "GET", "/page", null);
                 if (r.code == 200 && Api.signed(r.body) && Api.pageVersion(r.body) > lpv) { api.importPage(new java.io.ByteArrayInputStream(r.body), "interventions.html"); pr.put("pageNew", Api.pageVersion(r.body)); TLog.w("MAJ", "page v" + Api.pageVersion(r.body) + " reçue"); }
             } else if (lpv > rpv && rpv > 0) {
@@ -627,6 +629,7 @@ class Sync {
             if (rav > lav && sp.getLong("apkGot", 0) == rav && new File(new File(ctx.getCacheDir(), "maj"), "Interventions-recue.apk").length() == sp.getLong("apkLen", -1)) {
                 pr.put("apkNew", new File(new File(ctx.getCacheDir(), "maj"), "Interventions-recue.apk").getAbsolutePath());   // déjà reçue : pas de nouveau transfert
             } else if (rav > lav) {
+                act = "réception de l'appli " + rav + " depuis " + ping.optString("name") + "…";
                 File d = new File(ctx.getCacheDir(), "maj"); d.mkdirs(); File f = new File(d, "Interventions-recue.apk");
                 int c = hp.lastIndexOf(':');
                 try (Socket s = new Socket()) {
@@ -637,6 +640,7 @@ class Sync {
                     if (st != null && st.contains(" 200 ") && n > 0) { try (OutputStream fo = new FileOutputStream(f)) { copy(in, fo, n); } if (f.length() == n) { pr.put("apkNew", f.getAbsolutePath()); TLog.w("MAJ", "appli " + rav + " reçue (" + n + " o)"); sp.edit().putLong("apkGot", rav).putLong("apkLen", n).apply(); } }
                 }
             } else if (lav > rav && rav > 0 && (forceApk || System.currentTimeMillis() - sp.getLong("apkSentT_" + ping.optString("dev") + "_" + rav + "_" + lav, 0) > 15 * 60000L)) {   // renvoyée au plus toutes les 15 min tant que l'autre appareil n'est pas à jour
+                act = "envoi de l'appli " + lav + " à " + ping.optString("name") + "…";
                 Res w = http(hp, "POST", "/apkin", new File(ctx.getApplicationInfo().sourceDir));
                 if (w.code == 200) { pr.put("apkSent", lav); TLog.w("MAJ", "appli " + lav + " envoyée (l'autre : " + rav + ")"); sp.edit().putLong("apkSentT_" + ping.optString("dev") + "_" + rav + "_" + lav, System.currentTimeMillis()).apply(); }
             }
@@ -759,7 +763,9 @@ class Sync {
                     if (o.optBoolean("busy")) { pr.put("error", "l'autre appareil synchronise déjà"); peers.put(pr); TLog.w("SYNC", hp + " occupé (synchronise déjà)"); continue; }
                     try { JSONArray a = o.optJSONArray("wd"); if (a != null) { java.util.List<String> l = new java.util.ArrayList<>(); for (int i = 0; i < a.length(); i++) l.add(a.optString(i)); api.wrAddDirs(l); } } catch (Exception ignored) { }   // mêmes dossiers WillRelais des deux côtés
                     String vd = verDiff(o); TLog.w("VERSION", o.optString("name") + " : " + (vd.isEmpty() ? "identiques" : vd));
+                    act = "synchro des fichiers avec " + o.optString("name");
                     Exception se = null; try { syncWith(hp, pd, pr); } catch (Exception e) { se = e; }
+                    act = vd.isEmpty() ? "" : "mise à jour des versions avec " + o.optString("name");
                     if (!vd.isEmpty()) { updBusy.set(true); try { updates(hp, o, pr); } finally { updBusy.set(false); } verT = System.currentTimeMillis(); verK = vd; }   // à chaque synchro : la plus récente des pages / appli passe sur l'autre
                     if (se != null) throw se;
                 } catch (Exception e) { if (pr.has("dev")) { pr.put("error", String.valueOf(e.getMessage())); TLog.w("ERR", hp + " : " + e); } else { TLog.w("SYNC", hp + " injoignable : " + e.getClass().getSimpleName() + " " + e.getMessage()); continue; } }
@@ -768,7 +774,7 @@ class Sync {
             rep.put("peers", peers);
             rep.put("ok", true);
         } catch (Exception e) { try { rep.put("error", String.valueOf(e.getMessage())); } catch (Exception ignored) { } TLog.w("ERR", "synchro : " + e); }
-        finally { busy.set(false); }
+        finally { busy.set(false); act = ""; }
         TLog.w("SYNC", "fin en " + (System.currentTimeMillis() - t0) + " ms, " + peers.length() + " appareil(s)" + (peers.length() == 0 ? " - aucun autre appareil joignable" : ""));
         return rep.toString();
     }
