@@ -165,8 +165,8 @@ class Sync {
     void serve(Socket c) {
         try (Socket s = c) {
             s.setSoTimeout(30000);
-            InputStream in = s.getInputStream();
-            OutputStream out = s.getOutputStream();
+            InputStream in = new CIn(s.getInputStream());
+            OutputStream out = new COut(s.getOutputStream());
             String line = readLine(in);
             if (line == null) return;
             String[] rq = line.split(" ");
@@ -441,6 +441,21 @@ class Sync {
         } catch (Exception e) { return ""; }
     }
 
+    /* ---------- trafic réseau de la synchro, dans les deux sens (affiché par le voyant) ---------- */
+    static final java.util.concurrent.atomic.AtomicLong TX = new java.util.concurrent.atomic.AtomicLong(), RX = new java.util.concurrent.atomic.AtomicLong();
+    static final long T0 = System.currentTimeMillis();
+    static final class CIn extends java.io.FilterInputStream {
+        CIn(InputStream i) { super(i); }
+        @Override public int read() throws java.io.IOException { int b = super.read(); if (b >= 0) RX.incrementAndGet(); return b; }
+        @Override public int read(byte[] b, int o, int l) throws java.io.IOException { int n = super.read(b, o, l); if (n > 0) RX.addAndGet(n); return n; }
+    }
+    static final class COut extends java.io.FilterOutputStream {
+        COut(OutputStream o) { super(o); }
+        @Override public void write(int b) throws java.io.IOException { out.write(b); TX.incrementAndGet(); }
+        @Override public void write(byte[] b, int o, int l) throws java.io.IOException { out.write(b, o, l); TX.addAndGet(l); }
+    }
+    static String mo(long b) { return String.format(java.util.Locale.FRANCE, "%.2f Mo", b / 1048576.0); }
+
     static final Map<String, String> BAD = new java.util.concurrent.ConcurrentHashMap<>();
     void bad(String k, String why) { if (!why.equals(BAD.put(k, why))) TLog.w("ERR", "somme impossible pour " + k + " : " + why); }
     static String esc(String k) {                              // nom lisible + caractères non ASCII en code (repère les accents codés différemment)
@@ -465,7 +480,7 @@ class Sync {
         myDirty = dirty;
         JSONObject o = new JSONObject();
         try {
-            o.put("mine", treeSum()); o.put("busy", busy.get()); o.put("upd", updBusy.get()); o.put("act", act);
+            o.put("mine", treeSum()); o.put("tx", TX.get()); o.put("rx", RX.get()); o.put("t0", T0); o.put("busy", busy.get()); o.put("upd", updBusy.get()); o.put("act", act);
             if (token.isEmpty()) { o.put("conn", false); o.put("why", "synchro désactivée"); return o.toString(); }
             java.util.List<String> hs = new java.util.ArrayList<>(liveHosts);
             for (String c : candidates(null)) if (!hs.contains(c)) hs.add(c);
@@ -564,9 +579,9 @@ class Sync {
         int c = hp.lastIndexOf(':');
         try (Socket s = new Socket()) {
             s.connect(new InetSocketAddress(hp.substring(0, c), Integer.parseInt(hp.substring(c + 1))), 2500); s.setSoTimeout(60000);
-            OutputStream out = s.getOutputStream();
+            OutputStream out = new COut(s.getOutputStream());
             out.write(("GET /xget?p=" + URLEncoder.encode(rel, "UTF-8") + " HTTP/1.0\r\nX-Pair: " + token + "\r\nContent-Length: 0\r\n\r\n").getBytes(StandardCharsets.UTF_8)); out.flush();
-            InputStream in = s.getInputStream(); String st = readLine(in); long n = -1, mt = 0; String l;
+            InputStream in = new CIn(s.getInputStream()); String st = readLine(in); long n = -1, mt = 0; String l;
             while ((l = readLine(in)) != null && !l.isEmpty()) { String ll = l.toLowerCase(); if (ll.startsWith("content-length:")) n = Long.parseLong(l.substring(15).trim()); if (ll.startsWith("x-mtime:")) mt = Long.parseLong(l.substring(8).trim()); }
             if (st == null || !st.contains(" 200 ") || n < 0) throw new Exception("fichier introuvable sur l'autre appareil");
             File dir = to.getParentFile(); if (dir != null && !dir.isDirectory()) dir.mkdirs();
@@ -659,8 +674,8 @@ class Sync {
                 int c = hp.lastIndexOf(':');
                 try (Socket s = new Socket()) {
                     s.connect(new InetSocketAddress(hp.substring(0, c), Integer.parseInt(hp.substring(c + 1))), 2500); s.setSoTimeout(60000);
-                    OutputStream out = s.getOutputStream(); out.write(("GET /apk HTTP/1.0\r\nX-Pair: " + token + "\r\nContent-Length: 0\r\n\r\n").getBytes(StandardCharsets.UTF_8)); out.flush();
-                    InputStream in = s.getInputStream(); String st = readLine(in); long n = -1; String l;
+                    OutputStream out = new COut(s.getOutputStream()); out.write(("GET /apk HTTP/1.0\r\nX-Pair: " + token + "\r\nContent-Length: 0\r\n\r\n").getBytes(StandardCharsets.UTF_8)); out.flush();
+                    InputStream in = new CIn(s.getInputStream()); String st = readLine(in); long n = -1; String l;
                     while ((l = readLine(in)) != null && !l.isEmpty()) if (l.toLowerCase().startsWith("content-length:")) n = Long.parseLong(l.substring(15).trim());
                     if (st != null && st.contains(" 200 ") && n > 0) { try (OutputStream fo = new FileOutputStream(f)) { copy(in, fo, n); } if (f.length() == n) { pr.put("apkNew", f.getAbsolutePath()); TLog.w("MAJ", "appli " + rav + " reçue (" + n + " o)"); sp.edit().putLong("apkGot", rav).putLong("apkLen", n).apply(); } }
                 }
@@ -686,9 +701,9 @@ class Sync {
                     int c = hp.lastIndexOf(':');
                     try (Socket so = new Socket()) {
                         so.connect(new InetSocketAddress(hp.substring(0, c), Integer.parseInt(hp.substring(c + 1))), 1500); so.setSoTimeout(5000);
-                        OutputStream out = so.getOutputStream();
+                        OutputStream out = new COut(so.getOutputStream());
                         out.write(("POST /live HTTP/1.0\r\nX-Pair: " + token + "\r\nX-Port: " + port + "\r\nContent-Length: " + body.length + "\r\n\r\n").getBytes(StandardCharsets.UTF_8)); out.write(body); out.flush();
-                        String st = readLine(so.getInputStream());
+                        String st = readLine(new CIn(so.getInputStream()));
                         if (st == null || !st.contains(" 200 ")) liveHosts.remove(hp);
                     }
                 } catch (Exception e) { liveHosts.remove(hp); }   // plus joignable : retrouvé à la prochaine synchro
@@ -705,12 +720,12 @@ class Sync {
         try (Socket s = new Socket()) {
             s.connect(new InetSocketAddress(host, p), connTo);
             s.setSoTimeout(60000);
-            OutputStream out = s.getOutputStream();
+            OutputStream out = new COut(s.getOutputStream());
             long len = upload == null ? 0 : upload.length();
             out.write((method + " " + path + " HTTP/1.0\r\nX-Pair: " + token + "\r\nContent-Length: " + len + "\r\n\r\n").getBytes(StandardCharsets.UTF_8));
             if (upload != null) try (InputStream fi = new FileInputStream(upload)) { copy(fi, out, len); }
             out.flush();
-            InputStream in = s.getInputStream();
+            InputStream in = new CIn(s.getInputStream());
             Res r = new Res();
             String st = readLine(in); if (st == null) throw new Exception("pas de réponse");
             String[] sp0 = st.split(" "); r.code = sp0.length > 1 ? Integer.parseInt(sp0[1]) : 0;
@@ -732,9 +747,9 @@ class Sync {
         try (Socket s = new Socket()) {
             s.connect(new InetSocketAddress(hp.substring(0, c), Integer.parseInt(hp.substring(c + 1))), 2500);
             s.setSoTimeout(60000);
-            OutputStream out = s.getOutputStream();
+            OutputStream out = new COut(s.getOutputStream());
             out.write(("GET /get?p=" + URLEncoder.encode(rel, "UTF-8") + " HTTP/1.0\r\nX-Pair: " + token + "\r\nContent-Length: 0\r\n\r\n").getBytes(StandardCharsets.UTF_8)); out.flush();
-            InputStream in = s.getInputStream();
+            InputStream in = new CIn(s.getInputStream());
             Res r = new Res(); String st = readLine(in); if (st == null) throw new Exception("pas de réponse");
             String[] a = st.split(" "); r.code = a.length > 1 ? Integer.parseInt(a[1]) : 0;
             long n = -1; String l;
@@ -767,6 +782,7 @@ class Sync {
     String syncAll(String manual) {
         JSONObject rep = new JSONObject();
         JSONArray peers = new JSONArray();
+        final long tx0 = TX.get(), rx0 = RX.get();
         if (token.isEmpty()) return "{\"error\":\"code de jumelage absent\"}";
         if (!busy.compareAndSet(false, true)) { TLog.w("SYNC", "refusée : synchro déjà en cours"); return "{\"error\":\"synchro déjà en cours\"}"; }
         if (manual != null && !manual.trim().isEmpty()) sp.edit().putString("manual", manual.trim()).apply();
@@ -808,7 +824,7 @@ class Sync {
             rep.put("ok", true);
         } catch (Exception e) { try { rep.put("error", String.valueOf(e.getMessage())); } catch (Exception ignored) { } TLog.w("ERR", "synchro : " + e); }
         finally { busy.set(false); act = ""; }
-        TLog.w("SYNC", "fin en " + (System.currentTimeMillis() - t0) + " ms, " + peers.length() + " appareil(s)" + (peers.length() == 0 ? " - aucun autre appareil joignable" : ""));
+        TLog.w("SYNC", "fin en " + (System.currentTimeMillis() - t0) + " ms, " + peers.length() + " appareil(s)" + (peers.length() == 0 ? " - aucun autre appareil joignable" : "") + " · trafic ↑ " + mo(TX.get() - tx0) + " ↓ " + mo(RX.get() - rx0));
         return rep.toString();
     }
 
