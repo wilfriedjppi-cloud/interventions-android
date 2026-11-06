@@ -922,6 +922,9 @@ class Sync {
 
     /** Un fichier : comparaison et transfert dans le bon sens. */
     void one(String p, JSONObject L, JSONObject R, JSONObject M, JSONObject RS, boolean allowDel, String hp, String pd, Ctr C) {
+        try { one0(p, L, R, M, RS, allowDel, hp, pd, C); } catch (Exception e) { C.err.incrementAndGet(); TLog.w("ERR", p + " : " + e); }
+    }
+    void one0(String p, JSONObject L, JSONObject R, JSONObject M, JSONObject RS, boolean allowDel, String hp, String pd, Ctr C) throws Exception {
             JSONArray l = L.optJSONArray(p), r = R.optJSONArray(p), m = M.optJSONArray(p);
             long lm = l == null ? 0 : l.getLong(0), rm = r == null ? 0 : r.getLong(0);
             boolean lch = l != null && (m == null || Math.abs(lm - m.getLong(0)) > 2000 || l.getLong(1) != m.optLong(2, -1));
