@@ -428,9 +428,10 @@ class Sync {
                 JSONArray a = l.optJSONArray(k); if (a == null) continue; long mt = a.optLong(0), sz = a.optLong(1); long[] c;
                 synchronized (CRC) { c = CRC.get(k); }
                 if (c == null || c[0] != mt || c[1] != sz) {
-                    File f = fileOf(k); if (f == null || !f.isFile()) continue;
+                    File f = fileOf(k); if (f == null || !f.isFile()) { bad(k, f == null ? "chemin refusé" : "pas un fichier"); continue; }
                     java.util.zip.CRC32 cr = new java.util.zip.CRC32();
                     try (InputStream in = new FileInputStream(f)) { int n; while ((n = in.read(buf)) > 0) cr.update(buf, 0, n); }
+                    catch (Exception e) { bad(k, "illisible : " + e.getMessage()); continue; }   // un fichier illisible (droits) ne fausse plus toute la somme
                     c = new long[]{mt, sz, cr.getValue()}; synchronized (CRC) { CRC.put(k, c); }
                 }
                 md.update((k + ":" + Long.toHexString(c[2]) + ":" + sz + "\n").getBytes(StandardCharsets.UTF_8));
@@ -439,6 +440,17 @@ class Sync {
             return h.substring(0, 16);
         } catch (Exception e) { return ""; }
     }
+
+    static final Map<String, String> BAD = new java.util.concurrent.ConcurrentHashMap<>();
+    void bad(String k, String why) { if (!why.equals(BAD.put(k, why))) TLog.w("ERR", "somme impossible pour " + k + " : " + why); }
+    static String esc(String k) {                              // nom lisible + caractères non ASCII en code (repère les accents codés différemment)
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < k.length(); i++) { char c = k.charAt(i); if (c < 128) b.append(c); else b.append(c).append("[U+").append(Integer.toHexString(c)).append(']'); }
+        return b.toString();
+    }
+    String diffKey = "";
+    final Map<String, String> MISS = new java.util.concurrent.ConcurrentHashMap<>();
+    void missLog(String k, String msg) { String v = msg.replaceAll("date ici \\d+ là-bas \\d+", ""); if (!v.equals(MISS.put(k, v))) TLog.w("SYNC", msg); }
 
     /** État pour le voyant : autre appareil joignable ? sommes de contrôle des deux côtés, saisie en attente là-bas. */
     String lastState = "";
@@ -472,11 +484,13 @@ class Sync {
                             if (!p.optString("sum").equals(o.optString("mine"))) try {                       // fichiers qui diffèrent (5 premiers)
                                 Res d = http(hp, "GET", "/sums", null);
                                 if (d.code == 200) {
-                                    JSONObject t = new JSONObject(new String(d.body, StandardCharsets.UTF_8)), m = listJson(); JSONArray df = new JSONArray(); int nd = 0;
+                                    JSONObject t = new JSONObject(new String(d.body, StandardCharsets.UTF_8)), m = listJson(); JSONArray df = new JSONArray(); int nd = 0; StringBuilder dd = new StringBuilder();
                                     java.util.Set<String> all = new java.util.TreeSet<>(); java.util.Iterator<String> i1 = t.keys(); while (i1.hasNext()) all.add(i1.next());
                                     java.util.Iterator<String> i2 = m.keys(); while (i2.hasNext()) { String k = i2.next(); if (!k.endsWith("/")) all.add(k); }
-                                    for (String k : all) { if (derived(k)) continue; long[] c; synchronized (CRC) { c = CRC.get(k); } String mc = (c != null && m.has(k)) ? Long.toHexString(c[2]) : ""; if (!mc.equals(t.optString(k))) { nd++; if (df.length() < 5) df.put(k.startsWith("~ext/") ? k.substring(5) : k); } }
+                                    for (String k : all) { if (derived(k)) continue; long[] c; synchronized (CRC) { c = CRC.get(k); } String mc = (c != null && m.has(k)) ? Long.toHexString(c[2]) : ""; if (!mc.equals(t.optString(k))) { nd++; if (df.length() < 5) df.put(k.startsWith("~ext/") ? k.substring(5) : k);
+                                        if (nd <= 8) { JSONArray le = m.optJSONArray(k); dd.append("\n    ").append(esc(k)).append(" | ici : ").append(le == null ? "absent de la liste" : "date " + le.optLong(0) + " taille " + le.optLong(1)).append(", somme ").append(c == null ? "aucune" : Long.toHexString(c[2]) + (le != null && (c[0] != le.optLong(0) || c[1] != le.optLong(1)) ? " (périmée)" : "")).append(BAD.containsKey(k) ? " [" + BAD.get(k) + "]" : "").append(" | là-bas : ").append(t.has(k) ? "somme " + t.optString(k) : "absent"); } } }
                                     o.put("ndiff", nd); o.put("diff", df);
+                                    String dk = nd + df.toString(); if (!dk.equals(diffKey)) { diffKey = dk; TLog.w("VOYANT", "détail des " + nd + " fichier(s) différent(s) :" + dd); }
                                 }
                             } catch (Exception ignored) { }
                             return o.toString();
@@ -772,7 +786,14 @@ class Sync {
                     pr.put("dev", pd); pr.put("name", o.optString("name"));
                     liveHosts.add(hp); remember(hp);
                     TLog.w("SYNC", hp + " = " + o.optString("name") + " (" + pd + ") appli " + o.optLong("av") + " page v" + o.optInt("pv") + " WillRelais v" + o.optInt("wv"));
-                    if (o.optBoolean("busy")) { pr.put("error", "l'autre appareil synchronise déjà"); peers.put(pr); TLog.w("SYNC", hp + " occupé (synchronise déjà)"); continue; }
+                    if (o.optBoolean("busy")) {                // les deux lancent leur synchro en même temps : l'un attend que l'autre ait fini, l'autre renonce (sinon chacun refuse l'autre sans fin)
+                        boolean lead = dev.compareTo(pd) > 0;
+                        if (!lead) { pr.put("error", "l'autre appareil synchronise déjà"); peers.put(pr); TLog.w("SYNC", hp + " occupé (synchronise déjà) : sa synchro fait le travail, celle-ci s'arrête"); continue; }
+                        TLog.w("SYNC", hp + " occupé : attente de la fin de sa synchro");
+                        act = "attente de la fin de la synchro de " + o.optString("name");
+                        for (int w = 0; w < 20 && o.optBoolean("busy"); w++) { try { Thread.sleep(1500); } catch (Exception ignored) { } try { Res r2 = http(hp, "GET", "/ping?" + verQuery(), null); if (r2.code == 200) o = new JSONObject(new String(r2.body, StandardCharsets.UTF_8)); } catch (Exception ignored) { } }
+                        if (o.optBoolean("busy")) { pr.put("error", "l'autre appareil synchronise encore"); peers.put(pr); TLog.w("SYNC", hp + " toujours occupé après 30 s"); continue; }
+                    }
                     try { JSONArray a = o.optJSONArray("wd"); if (a != null) { java.util.List<String> l = new java.util.ArrayList<>(); for (int i = 0; i < a.length(); i++) l.add(a.optString(i)); api.wrAddDirs(l); } } catch (Exception ignored) { }   // mêmes dossiers WillRelais des deux côtés
                     String vd = verDiff(o); TLog.w("VERSION", o.optString("name") + " : " + (vd.isEmpty() ? "identiques" : vd));
                     act = "synchro des fichiers avec " + o.optString("name");
@@ -793,6 +814,7 @@ class Sync {
 
     void syncWith(String hp, String pd, JSONObject pr) throws Exception {
         Res lr = http(hp, "GET", "/list", null);
+        for (int w = 0; w < 10 && lr.code == 423; w++) { try { Thread.sleep(2000); } catch (Exception ignored) { } lr = http(hp, "GET", "/list", null); }   // l'autre vient de lancer sa synchro : on attend qu'elle finisse
         if (lr.code != 200) throw new Exception("liste refusée (" + lr.code + ")");
         JSONObject R = new JSONObject(new String(lr.body, StandardCharsets.UTF_8)), L = listJson();
         JSONObject M; try { M = new JSONObject(sp.getString("m_" + pd, "{}")); } catch (Exception e) { M = new JSONObject(); }
@@ -840,6 +862,7 @@ class Sync {
                 if (l != null && r != null) {
                     String lc = "", rc = RS == null ? "" : RS.optString(p, "");
                     long[] cc; synchronized (CRC) { cc = CRC.get(p); } if (cc != null && cc[0] == lm && cc[1] == l.getLong(1)) lc = Long.toHexString(cc[2]);
+                    if ((lc.isEmpty() || rc.isEmpty()) && !own && !theirs) missLog(p, esc(p) + " : somme " + (lc.isEmpty() ? "indisponible ici" + (BAD.containsKey(p) ? " (" + BAD.get(p) + ")" : "") : "ici " + lc) + ", " + (rc.isEmpty() ? "indisponible là-bas" : "là-bas " + rc) + " ; date ici " + lm + " là-bas " + rm + ", taille " + l.getLong(1) + "/" + r.getLong(1) + (lch ? ", modifié ici" : "") + (rch ? ", modifié là-bas" : ""));
                     if (!lc.isEmpty() && lc.equals(rc)) { NM.put(p, new JSONArray().put(lm).put(rm).put(l.getLong(1))); continue; }   // même contenu : rien à faire
                     if (own || theirs) {
                         boolean differ = l.getLong(1) != r.getLong(1) || Math.abs(lm - rm) > 2000 || (!lc.isEmpty() && !rc.isEmpty() && !lc.equals(rc));
