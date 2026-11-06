@@ -193,6 +193,7 @@ class Sync {
                 try { reply(out, 200, "{\"ok\":true}"); } catch (Exception ignored) { }
                 return;
             }
+            if (path.equals("/sums")) { treeSum(); JSONObject o = new JSONObject(), cur = listJson(); java.util.Iterator<String> ki = cur.keys(); while (ki.hasNext()) { String k = ki.next(); long[] cc; synchronized (CRC) { cc = CRC.get(k); } if (cc != null) o.put(k, Long.toHexString(cc[2])); } reply(out, 200, o.toString()); return; }   // détail par fichier (diagnostic du voyant)
             if (path.equals("/sum")) {                                   // somme de contrôle des fichiers synchronisés + saisie en attente
                 JSONObject o = new JSONObject(); o.put("dev", dev); o.put("name", name); o.put("sum", treeSum()); o.put("dirty", myDirty); o.put("busy", busy.get());
                 reply(out, 200, o.toString()); return;
@@ -442,6 +443,16 @@ class Sync {
                             if (p.optString("dev").equals(dev)) continue;
                             liveHosts.add(hp); remember(hp);
                             o.put("conn", true); o.put("name", p.optString("name")); o.put("theirs", p.optString("sum")); o.put("pdirty", p.optBoolean("dirty")); o.put("pbusy", p.optBoolean("busy"));
+                            if (!p.optString("sum").equals(o.optString("mine"))) try {                       // fichiers qui diffèrent (5 premiers)
+                                Res d = http(hp, "GET", "/sums", null);
+                                if (d.code == 200) {
+                                    JSONObject t = new JSONObject(new String(d.body, StandardCharsets.UTF_8)), m = listJson(); JSONArray df = new JSONArray(); int nd = 0;
+                                    java.util.Set<String> all = new java.util.TreeSet<>(); java.util.Iterator<String> i1 = t.keys(); while (i1.hasNext()) all.add(i1.next());
+                                    java.util.Iterator<String> i2 = m.keys(); while (i2.hasNext()) { String k = i2.next(); if (!k.endsWith("/")) all.add(k); }
+                                    for (String k : all) { long[] c; synchronized (CRC) { c = CRC.get(k); } String mc = (c != null && m.has(k)) ? Long.toHexString(c[2]) : ""; if (!mc.equals(t.optString(k))) { nd++; if (df.length() < 5) df.put(k.substring(k.lastIndexOf('/') + 1)); } }
+                                    o.put("ndiff", nd); o.put("diff", df);
+                                }
+                            } catch (Exception ignored) { }
                             return o.toString();
                         }
                         if (r.code == 404) { o.put("conn", true); o.put("old", true); return o.toString(); }   // autre appareil en version plus ancienne
