@@ -796,6 +796,12 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public String logTail(int n) { TLog.init(MainActivity.this); return TLog.tail(Math.max(1000, Math.min(n, 200000))); }
 
+        /** Fichiers de la page en cours (chemins relatifs à « Gestion interventions ») : synchronisés en premier, suivis à part par le voyant. */
+        @JavascriptInterface
+        public void syncPrio(String json) {
+            try { JSONArray a = new JSONArray(json); java.util.List<String> l = new java.util.ArrayList<>(); for (int i = 0; i < a.length(); i++) l.add(a.optString(i)); Sync sy = syncer; if (sy != null) sy.setPrio(l); } catch (Exception ignored) { }
+        }
+
         @JavascriptInterface
         public void logClear() { TLog.init(MainActivity.this); TLog.clear(); TLog.w("JOURNAL", "effacé"); }
 

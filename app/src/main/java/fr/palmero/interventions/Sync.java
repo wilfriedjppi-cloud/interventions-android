@@ -461,6 +461,10 @@ class Sync {
     }
     static String mo(long b) { return String.format(java.util.Locale.FRANCE, "%.2f Mo", b / 1048576.0); }
 
+    /** Fichiers de la page en cours (intervention ouverte) : transférés en premier, et suivis à part par le voyant. */
+    volatile Set<String> prio = java.util.Collections.emptySet();
+    void setPrio(java.util.Collection<String> ks) { Set<String> n = new java.util.HashSet<>(); for (String k : ks) if (k != null && !k.isEmpty()) n.add(k); prio = n; }
+
     static final Map<String, String> BAD = new java.util.concurrent.ConcurrentHashMap<>();
     void bad(String k, String why) { if (!why.equals(BAD.put(k, why))) TLog.w("ERR", "somme impossible pour " + k + " : " + why); }
     static String esc(String k) {                              // nom lisible + caractères non ASCII en code (repère les accents codés différemment)
@@ -511,6 +515,11 @@ class Sync {
                                     for (String k : all) { if (noSum(k)) continue; if (BAD.containsKey(k) || t.optString(k).startsWith("!")) { if (bd.length() < 10) bd.put((k.startsWith("~ext/") ? k.substring(5) : k) + (BAD.containsKey(k) ? " (illisible ici)" : " (illisible là-bas)")); continue; } long[] c; synchronized (CRC) { c = CRC.get(k); } String mc = (c != null && m.has(k)) ? Long.toHexString(c[2]) : ""; if (!mc.equals(t.optString(k))) { nd++; if (df.length() < 5) df.put(k.startsWith("~ext/") ? k.substring(5) : k);
                                         if (nd <= 8) { JSONArray le = m.optJSONArray(k); dd.append("\n    ").append(esc(k)).append(" | ici : ").append(le == null ? "absent de la liste" : "date " + le.optLong(0) + " taille " + le.optLong(1)).append(", somme ").append(c == null ? "aucune" : Long.toHexString(c[2]) + (le != null && (c[0] != le.optLong(0) || c[1] != le.optLong(1)) ? " (périmée)" : "")).append(BAD.containsKey(k) ? " [" + BAD.get(k) + "]" : "").append(" | là-bas : ").append(t.has(k) ? "somme " + t.optString(k) : "absent"); } } }
                                     o.put("ndiff", nd); o.put("diff", df); if (bd.length() > 0) o.put("bad", bd);
+                                    if (!prio.isEmpty()) {                     // la page en cours est-elle à jour des deux côtés, même si le reste ne l'est pas encore ?
+                                        boolean pOk = true; JSONArray pd2 = new JSONArray();
+                                        for (String k : prio) { long[] c; synchronized (CRC) { c = CRC.get(k); } String mc = (c != null && m.has(k)) ? Long.toHexString(c[2]) : ""; if (!mc.equals(t.optString(k))) { pOk = false; pd2.put(k.substring(k.lastIndexOf('/') + 1)); } }
+                                        o.put("prioOk", pOk); if (!pOk) o.put("prioDiff", pd2);
+                                    }
                                     if (nd == 0 && !p.optBoolean("dirty")) o.put("theirs", o.optString("mine"));   // seuls des fichiers illisibles diffèrent : rien à synchroniser
                                     String dk = nd + df.toString(); if (!dk.equals(diffKey)) { diffKey = dk; TLog.w("VOYANT", "détail des " + nd + " fichier(s) différent(s) :" + dd); }
                                 }
@@ -863,7 +872,6 @@ class Sync {
         Set<String> all = new java.util.TreeSet<>();
         for (java.util.Iterator<String> it = R.keys(); it.hasNext(); ) all.add(it.next());
         for (java.util.Iterator<String> it = L.keys(); it.hasNext(); ) all.add(it.next());
-        int up = 0, down = 0, del = 0, err = 0, skip = 0; long bytes = 0;
         JSONObject RS = null;                                     // sommes de contrôle de l'autre appareil : contenu différent même à date et taille égales
         try { Res sr = http(hp, "GET", "/sums", null); if (sr.code == 200) RS = new JSONObject(new String(sr.body, StandardCharsets.UTF_8)); treeSum(); } catch (Exception e) { TLog.w("SYNC", "sommes de contrôle de l'autre appareil indisponibles : " + e.getMessage()); }
         int dirs = 0;
@@ -873,58 +881,24 @@ class Sync {
             if (R.has(p) && !L.has(p)) { if (dd.mkdirs()) dirs++; }
             else if (L.has(p) && !R.has(p)) { try { if (http(hp, "POST", "/mkdir?p=" + URLEncoder.encode(p, "UTF-8"), null).code == 200) dirs++; } catch (Exception ignored) { } }
         }
-        for (String p : all) {
-            if (p.endsWith("/")) continue;
-            JSONArray l = L.optJSONArray(p), r = R.optJSONArray(p), m = M.optJSONArray(p);
-            long lm = l == null ? 0 : l.getLong(0), rm = r == null ? 0 : r.getLong(0);
-            boolean lch = l != null && (m == null || Math.abs(lm - m.getLong(0)) > 2000 || l.getLong(1) != m.optLong(2, -1));
-            boolean rch = r != null && (m == null || Math.abs(rm - m.getLong(1)) > 2000 || r.getLong(1) != m.optLong(2, -1));
-            File f; try { f = fileOf(p); } catch (Exception e) { err++; TLog.w("ERR", p + " : " + e); continue; }
-            if (derived(p)) {                                     // fichier refait par chaque appareil : seulement s'il manque d'un côté
-                try {
-                    if (l != null && r == null && f != null && f.isFile()) { Res w = http(hp, "POST", "/put?p=" + URLEncoder.encode(p, "UTF-8") + "&m=" + lm, f); if (w.code == 200) { up++; TLog.w("ENVOI", p + " (manquait là-bas ; ensuite refait par chaque appareil)"); } }
-                    else if (r != null && l == null && f != null) { Res d = download(hp, p, f); if (d.code == 200) { down++; TLog.w("RECU", p + " (manquait ici ; ensuite refait par chaque appareil)"); } }
-                } catch (Exception e) { TLog.w("ERR", p + " : " + e); }
-                continue;
-            }
-            boolean own = p.startsWith("sync/" + dev + ".") && p.endsWith(".json"), theirs = p.startsWith("sync/" + pd + ".") && p.endsWith(".json");   // état de chaque appareil : écrit par lui seul, recopié dans un seul sens
-            if ((own && l == null) || (theirs && r == null)) continue;
-            if (f == null) { skip++; TLog.w("GARDE", p + " ignoré : chemin refusé sur cet appareil (" + (l != null ? "ici" : "") + (r != null ? (l != null ? " et " : "") + "là-bas" : "") + ")"); continue; }
-            try {
-                if (l != null && r != null) {
-                    String lc = "", rc = RS == null ? "" : RS.optString(p, "");
-                    long[] cc; synchronized (CRC) { cc = CRC.get(p); } if (cc != null && cc[0] == lm && cc[1] == l.getLong(1)) lc = Long.toHexString(cc[2]);
-                    if (BAD.containsKey(p) || rc.startsWith("!")) {          // fichier listé mais illisible d'un côté (droits Android) : rien à faire, et pas noté comme commun
-                        NM.remove(p);                                         // s'il est supprimé à la main de ce côté, la copie lisible de l'autre côté sera renvoyée (pas supprimée)
-                        missLog(p, esc(p) + " : illisible " + (BAD.containsKey(p) ? "ici (" + BAD.get(p) + ")" : "là-bas (" + rc.substring(1) + ")") + " → ni copié ni supprimé ; le supprimer avec le gestionnaire de fichiers sur cet appareil-là pour qu'il soit recopié depuis l'autre");
-                        continue;
-                    }
-                    if ((lc.isEmpty() || rc.isEmpty()) && !own && !theirs) missLog(p, esc(p) + " : somme " + (lc.isEmpty() ? "indisponible ici" + (BAD.containsKey(p) ? " (" + BAD.get(p) + ")" : "") : "ici " + lc) + ", " + (rc.isEmpty() ? "indisponible là-bas" : "là-bas " + rc) + " ; date ici " + lm + " là-bas " + rm + ", taille " + l.getLong(1) + "/" + r.getLong(1) + (lch ? ", modifié ici" : "") + (rch ? ", modifié là-bas" : ""));
-                    if (!lc.isEmpty() && lc.equals(rc)) { NM.put(p, new JSONArray().put(lm).put(rm).put(l.getLong(1))); continue; }   // même contenu : rien à faire
-                    if (own || theirs) {
-                        boolean differ = !lc.isEmpty() && !rc.isEmpty() && !rc.startsWith("!") ? !lc.equals(rc) : (l.getLong(1) != r.getLong(1) || Math.abs(lm - rm) > 2000);   // même contenu (somme de contrôle) : rien à renvoyer, même si le fichier a été réécrit
-                        if (!differ) { NM.put(p, new JSONArray().put(lm).put(rm).put(l.getLong(1))); continue; }
-                        lch = own; rch = theirs;
-                    } else if (!lc.isEmpty() && !rc.isEmpty() && !lch && !rch) {   // contenu différent alors que la date et la taille ne l'indiquent pas : le plus récent gagne, sinon le même côté des deux appareils
-                        lch = lm > rm + 2000 || (Math.abs(lm - rm) <= 2000 && dev.compareTo(pd) > 0); rch = !lch;
-                        TLog.w("SYNC", p + " : contenu différent (somme ici " + lc + ", là-bas " + rc + ") → " + (lch ? "version d'ici envoyée" : "version de là-bas reprise"));
-                    }
-                    if (!lch && !rch) { NM.put(p, m); continue; }
-                    if (!own && !theirs && l.getLong(1) == r.getLong(1) && Math.abs(lm - rm) <= 2000 && (lc.isEmpty() || rc.isEmpty())) { NM.put(p, new JSONArray().put(lm).put(rm).put(l.getLong(1))); continue; }
-                    boolean push = lch && (!rch || lm >= rm);
-                    if (push) { Res w = http(hp, "POST", "/put?p=" + URLEncoder.encode(p, "UTF-8") + "&m=" + lm, f); TLog.w(w.code == 200 ? "ENVOI" : "ERR", p + " " + l.getLong(1) + " o" + (lch && rch ? " (modifié des deux côtés, ici plus récent)" : "") + (w.code == 200 ? "" : " -> " + w.code)); if (w.code != 200) { err++; continue; } long nm = new JSONObject(new String(w.body, StandardCharsets.UTF_8)).optLong("m", lm); NM.put(p, new JSONArray().put(lm).put(nm).put(l.getLong(1))); up++; bytes += l.getLong(1); }
-                    else { Res d = download(hp, p, f); TLog.w(d.code == 200 ? "RECU" : "ERR", p + " " + r.getLong(1) + " o" + (lch && rch ? " (modifié des deux côtés, là-bas plus récent : version d'ici remplacée)" : "") + (d.code == 200 ? "" : " -> " + d.code)); if (d.code != 200) { err++; continue; } NM.put(p, new JSONArray().put(f.lastModified()).put(rm).put(f.length())); down++; bytes += f.length(); }
-                } else if (l != null) {                                 // seulement ici
-                    if (m != null && !lch && !own) { if (allowDel && f.delete()) { del++; TLog.w("SUPPR", p + " (supprimé sur l'autre appareil)"); } else if (!allowDel) TLog.w("GARDE", p + " (suppression retenue : trop d'un coup)"); continue; }          // supprimé sur l'autre appareil
-                    Res w = http(hp, "POST", "/put?p=" + URLEncoder.encode(p, "UTF-8") + "&m=" + lm, f); TLog.w(w.code == 200 ? "ENVOI" : "ERR", p + " " + l.getLong(1) + " o (nouveau)" + (w.code == 200 ? "" : " -> " + w.code)); if (w.code != 200) { err++; continue; }
-                    long nm = new JSONObject(new String(w.body, StandardCharsets.UTF_8)).optLong("m", lm); NM.put(p, new JSONArray().put(lm).put(nm).put(l.getLong(1))); up++; bytes += l.getLong(1);
-                } else {                                                 // seulement là-bas
-                    if (m != null && !rch && !theirs) { if (allowDel) { Res d = http(hp, "POST", "/del?p=" + URLEncoder.encode(p, "UTF-8"), null); if (d.code == 200) del++; TLog.w("SUPPR", p + " (supprimé ici, effacé là-bas)" + (d.code == 200 ? "" : " -> " + d.code)); } else TLog.w("GARDE", p + " (suppression retenue)"); continue; }   // supprimé ici
-                    Res d = download(hp, p, f); TLog.w(d.code == 200 ? "RECU" : "ERR", p + " " + r.getLong(1) + " o (nouveau)" + (d.code == 200 ? "" : " -> " + d.code)); if (d.code != 200) { err++; continue; }
-                    NM.put(p, new JSONArray().put(f.lastModified()).put(rm).put(f.length())); down++; bytes += f.length();
-                }
-            } catch (Exception e) { err++; TLog.w("ERR", p + " : " + e); }
-        }
+        final Ctr C = new Ctr(NM);
+        final JSONObject fL = L, fR = R, fM = M, fRS = RS; final boolean fDel = allowDel;
+        // d'abord la page en cours (intervention ouverte), une par une ; puis le reste en parallèle sur plusieurs cœurs
+        java.util.List<String> first = new java.util.ArrayList<>(), rest = new java.util.ArrayList<>();
+        Set<String> pk = prio;
+        for (String p : all) { if (p.endsWith("/")) continue; if (pk.contains(p)) first.add(p); else rest.add(p); }
+        int n0 = C.up.get() + C.down.get();
+        for (String p : first) { act = "page en cours : " + p.substring(p.lastIndexOf('/') + 1); one(p, fL, fR, fM, fRS, fDel, hp, pd, C); }
+        if (C.up.get() + C.down.get() > n0) TLog.w("SYNC", "page en cours transférée en premier");
+        act = "synchro des fichiers";
+        int nt = Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors() / 2));
+        java.util.concurrent.ExecutorService ex = java.util.concurrent.Executors.newFixedThreadPool(nt);
+        try {
+            java.util.List<java.util.concurrent.Future<?>> fs = new java.util.ArrayList<>();
+            for (final String p : rest) fs.add(ex.submit(() -> { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND); one(p, fL, fR, fM, fRS, fDel, hp, pd, C); }));
+            for (java.util.concurrent.Future<?> fu : fs) try { fu.get(); } catch (Exception e) { C.err.incrementAndGet(); TLog.w("ERR", "transfert : " + e); }
+        } finally { ex.shutdownNow(); }
+        int up = C.up.get(), down = C.down.get(), del = C.del.get(), err = C.err.get(), skip = C.skip.get(); long bytes = C.bytes.get();
         sp.edit().putString("m_" + pd, NM.toString()).putLong("t_" + pd, System.currentTimeMillis()).apply();
         try {                                                     // même état commun envoyé à l'autre appareil (local et distant inversés)
             JSONObject SW = new JSONObject();
@@ -934,6 +908,69 @@ class Sync {
             http(hp, "POST", "/man?d=" + URLEncoder.encode(dev, "UTF-8"), tmp); tmp.delete();
         } catch (Exception ignored) { }
         pr.put("held", !allowDel); pr.put("dirs", dirs); pr.put("up", up); pr.put("down", down); pr.put("del", del); pr.put("err", err); if (skip > 0) pr.put("skip", skip); pr.put("bytes", bytes);
+    }
+
+    /** Compteurs et état commun d'une synchro, partagés par les transferts menés en parallèle. */
+    static final class Ctr {
+        final java.util.concurrent.atomic.AtomicInteger up = new java.util.concurrent.atomic.AtomicInteger(), down = new java.util.concurrent.atomic.AtomicInteger(), del = new java.util.concurrent.atomic.AtomicInteger(), err = new java.util.concurrent.atomic.AtomicInteger(), skip = new java.util.concurrent.atomic.AtomicInteger();
+        final java.util.concurrent.atomic.AtomicLong bytes = new java.util.concurrent.atomic.AtomicLong();
+        final JSONObject NM;
+        Ctr(JSONObject nm) { NM = nm; }
+        void put(String k, Object v) { synchronized (NM) { try { NM.put(k, v); } catch (Exception ignored) { } } }
+        void remove(String k) { synchronized (NM) { NM.remove(k); } }
+    }
+
+    /** Un fichier : comparaison et transfert dans le bon sens. */
+    void one(String p, JSONObject L, JSONObject R, JSONObject M, JSONObject RS, boolean allowDel, String hp, String pd, Ctr C) {
+            JSONArray l = L.optJSONArray(p), r = R.optJSONArray(p), m = M.optJSONArray(p);
+            long lm = l == null ? 0 : l.getLong(0), rm = r == null ? 0 : r.getLong(0);
+            boolean lch = l != null && (m == null || Math.abs(lm - m.getLong(0)) > 2000 || l.getLong(1) != m.optLong(2, -1));
+            boolean rch = r != null && (m == null || Math.abs(rm - m.getLong(1)) > 2000 || r.getLong(1) != m.optLong(2, -1));
+            File f; try { f = fileOf(p); } catch (Exception e) { C.err.incrementAndGet(); TLog.w("ERR", p + " : " + e); return; }
+            if (derived(p)) {                                     // fichier refait par chaque appareil : seulement s'il manque d'un côté
+                try {
+                    if (l != null && r == null && f != null && f.isFile()) { Res w = http(hp, "POST", "/put?p=" + URLEncoder.encode(p, "UTF-8") + "&m=" + lm, f); if (w.code == 200) { C.up.incrementAndGet(); TLog.w("ENVOI", p + " (manquait là-bas ; ensuite refait par chaque appareil)"); } }
+                    else if (r != null && l == null && f != null) { Res d = download(hp, p, f); if (d.code == 200) { C.down.incrementAndGet(); TLog.w("RECU", p + " (manquait ici ; ensuite refait par chaque appareil)"); } }
+                } catch (Exception e) { TLog.w("ERR", p + " : " + e); }
+                return;
+            }
+            boolean own = p.startsWith("sync/" + dev + ".") && p.endsWith(".json"), theirs = p.startsWith("sync/" + pd + ".") && p.endsWith(".json");   // état de chaque appareil : écrit par lui seul, recopié dans un seul sens
+            if ((own && l == null) || (theirs && r == null)) return;
+            if (f == null) { C.skip.incrementAndGet(); TLog.w("GARDE", p + " ignoré : chemin refusé sur cet appareil (" + (l != null ? "ici" : "") + (r != null ? (l != null ? " et " : "") + "là-bas" : "") + ")"); return; }
+            try {
+                if (l != null && r != null) {
+                    String lc = "", rc = RS == null ? "" : RS.optString(p, "");
+                    long[] cc; synchronized (CRC) { cc = CRC.get(p); } if (cc != null && cc[0] == lm && cc[1] == l.getLong(1)) lc = Long.toHexString(cc[2]);
+                    if (BAD.containsKey(p) || rc.startsWith("!")) {          // fichier listé mais illisible d'un côté (droits Android) : rien à faire, et pas noté comme commun
+                        C.remove(p);                                         // s'il est supprimé à la main de ce côté, la copie lisible de l'autre côté sera renvoyée (pas supprimée)
+                        missLog(p, esc(p) + " : illisible " + (BAD.containsKey(p) ? "ici (" + BAD.get(p) + ")" : "là-bas (" + rc.substring(1) + ")") + " → ni copié ni supprimé ; le supprimer avec le gestionnaire de fichiers sur cet appareil-là pour qu'il soit recopié depuis l'autre");
+                        return;
+                    }
+                    if ((lc.isEmpty() || rc.isEmpty()) && !own && !theirs) missLog(p, esc(p) + " : somme " + (lc.isEmpty() ? "indisponible ici" + (BAD.containsKey(p) ? " (" + BAD.get(p) + ")" : "") : "ici " + lc) + ", " + (rc.isEmpty() ? "indisponible là-bas" : "là-bas " + rc) + " ; date ici " + lm + " là-bas " + rm + ", taille " + l.getLong(1) + "/" + r.getLong(1) + (lch ? ", modifié ici" : "") + (rch ? ", modifié là-bas" : ""));
+                    if (!lc.isEmpty() && lc.equals(rc)) { C.put(p, new JSONArray().put(lm).put(rm).put(l.getLong(1))); return; }   // même contenu : rien à faire
+                    if (own || theirs) {
+                        boolean differ = !lc.isEmpty() && !rc.isEmpty() && !rc.startsWith("!") ? !lc.equals(rc) : (l.getLong(1) != r.getLong(1) || Math.abs(lm - rm) > 2000);   // même contenu (somme de contrôle) : rien à renvoyer, même si le fichier a été réécrit
+                        if (!differ) { C.put(p, new JSONArray().put(lm).put(rm).put(l.getLong(1))); return; }
+                        lch = own; rch = theirs;
+                    } else if (!lc.isEmpty() && !rc.isEmpty() && !lch && !rch) {   // contenu différent alors que la date et la taille ne l'indiquent pas : le plus récent gagne, sinon le même côté des deux appareils
+                        lch = lm > rm + 2000 || (Math.abs(lm - rm) <= 2000 && dev.compareTo(pd) > 0); rch = !lch;
+                        TLog.w("SYNC", p + " : contenu différent (somme ici " + lc + ", là-bas " + rc + ") → " + (lch ? "version d'ici envoyée" : "version de là-bas reprise"));
+                    }
+                    if (!lch && !rch) { C.put(p, m); return; }
+                    if (!own && !theirs && l.getLong(1) == r.getLong(1) && Math.abs(lm - rm) <= 2000 && (lc.isEmpty() || rc.isEmpty())) { C.put(p, new JSONArray().put(lm).put(rm).put(l.getLong(1))); return; }
+                    boolean push = lch && (!rch || lm >= rm);
+                    if (push) { Res w = http(hp, "POST", "/put?p=" + URLEncoder.encode(p, "UTF-8") + "&m=" + lm, f); TLog.w(w.code == 200 ? "ENVOI" : "ERR", p + " " + l.getLong(1) + " o" + (lch && rch ? " (modifié des deux côtés, ici plus récent)" : "") + (w.code == 200 ? "" : " -> " + w.code)); if (w.code != 200) { C.err.incrementAndGet(); return; } long nm = new JSONObject(new String(w.body, StandardCharsets.UTF_8)).optLong("m", lm); C.put(p, new JSONArray().put(lm).put(nm).put(l.getLong(1))); C.up.incrementAndGet(); C.bytes.addAndGet(l.getLong(1)); }
+                    else { Res d = download(hp, p, f); TLog.w(d.code == 200 ? "RECU" : "ERR", p + " " + r.getLong(1) + " o" + (lch && rch ? " (modifié des deux côtés, là-bas plus récent : version d'ici remplacée)" : "") + (d.code == 200 ? "" : " -> " + d.code)); if (d.code != 200) { C.err.incrementAndGet(); return; } C.put(p, new JSONArray().put(f.lastModified()).put(rm).put(f.length())); C.down.incrementAndGet(); C.bytes.addAndGet(f.length()); }
+                } else if (l != null) {                                 // seulement ici
+                    if (m != null && !lch && !own) { if (allowDel && f.delete()) { C.del.incrementAndGet(); TLog.w("SUPPR", p + " (supprimé sur l'autre appareil)"); } else if (!allowDel) TLog.w("GARDE", p + " (suppression retenue : trop d'un coup)"); return; }          // supprimé sur l'autre appareil
+                    Res w = http(hp, "POST", "/put?p=" + URLEncoder.encode(p, "UTF-8") + "&m=" + lm, f); TLog.w(w.code == 200 ? "ENVOI" : "ERR", p + " " + l.getLong(1) + " o (nouveau)" + (w.code == 200 ? "" : " -> " + w.code)); if (w.code != 200) { C.err.incrementAndGet(); return; }
+                    long nm = new JSONObject(new String(w.body, StandardCharsets.UTF_8)).optLong("m", lm); C.put(p, new JSONArray().put(lm).put(nm).put(l.getLong(1))); C.up.incrementAndGet(); C.bytes.addAndGet(l.getLong(1));
+                } else {                                                 // seulement là-bas
+                    if (m != null && !rch && !theirs) { if (allowDel) { Res d = http(hp, "POST", "/del?p=" + URLEncoder.encode(p, "UTF-8"), null); if (d.code == 200) C.del.incrementAndGet(); TLog.w("SUPPR", p + " (supprimé ici, effacé là-bas)" + (d.code == 200 ? "" : " -> " + d.code)); } else TLog.w("GARDE", p + " (suppression retenue)"); return; }   // supprimé ici
+                    Res d = download(hp, p, f); TLog.w(d.code == 200 ? "RECU" : "ERR", p + " " + r.getLong(1) + " o (nouveau)" + (d.code == 200 ? "" : " -> " + d.code)); if (d.code != 200) { C.err.incrementAndGet(); return; }
+                    C.put(p, new JSONArray().put(f.lastModified()).put(rm).put(f.length())); C.down.incrementAndGet(); C.bytes.addAndGet(f.length());
+                }
+            } catch (Exception e) { C.err.incrementAndGet(); TLog.w("ERR", p + " : " + e); }
     }
 
     String info() {
